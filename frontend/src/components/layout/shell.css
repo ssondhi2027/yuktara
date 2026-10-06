@@ -1,0 +1,102 @@
+/* ---------- Frame ---------- */
+.shell { min-height: 100dvh; }
+.shell-main { min-width: 0; }
+
+.side { display: none; }
+
+@media (min-width: 768px) {
+  .shell { display: grid; grid-template-columns: 96px minmax(0, 1fr); }
+  .side {
+    position: sticky; top: 0; height: 100dvh; display: flex; flex-direction: column; align-items: center;
+    gap: 18px; padding: 20px 8px; background: var(--bg); border-right: 1px solid var(--line);
+  }
+  .bottom-nav { display: none !important; }
+}
+@media (min-width: 1200px) {
+  .client-shell { grid-template-columns: 204px minmax(0, 1fr); }
+  .coach-shell { grid-template-columns: 212px minmax(0, 1fr); }
+  .side { align-items: stretch; padding: 22px 14px; }
+  .client-shell .side { background: var(--surface); }
+}
+
+.side-brand { display: flex; align-items: center; gap: 10px; padding: 0 2px; }
+.side-brand .brand-row { display: flex; align-items: center; gap: 10px; }
+.coach-badge {
+  display: inline-block; margin-top: 4px; padding: 2px 7px; border-radius: 6px; background: rgb(221 172 79 / .18);
+  color: var(--gold); font-size: 10px; font-weight: 700; letter-spacing: .08em;
+}
+.side-nav { display: flex; flex-direction: column; gap: 6px; width: 100%; }
+.side-foot { margin-top: auto; display: flex; flex-direction: column; align-items: center; gap: 10px; width: 100%; }
+@media (min-width: 1200px) { .side-foot { align-items: stretch; } }
+
+.side-link {
+  display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 10px 4px; border-radius: 16px;
+  text-decoration: none; color: var(--ink-2); font-size: 12px; font-weight: 600;
+}
+.side-link:hover { background: var(--surface-2); }
+.side-link.active { background: var(--gold); color: var(--on-gold); }
+@media (min-width: 1200px) {
+  .side-link { flex-direction: row; gap: 12px; padding: 10px 12px; font-size: 15px; font-weight: 500; border-radius: 10px; color: var(--ink); }
+  .side-link.active { font-weight: 600; }
+}
+
+.coach-card { display: flex; gap: 10px; align-items: center; background: var(--surface-2); border-radius: 14px; padding: 12px; }
+
+/* Coach sidebar is always forest */
+.dark-side { background: var(--side-dark) !important; border-right: 0 !important; color: #f3efe4; }
+.dark-side .side-link { color: #c9d3cc; }
+.dark-side .side-link:hover { background: rgb(255 255 255 / .06); }
+.dark-side .side-link.active { background: var(--gold); color: #123a2b; }
+.dark-side .muted-badge { background: rgb(255 255 255 / .12); color: #f3efe4; }
+.dark-side .side-foot { border-top: 1px solid rgb(255 255 255 / .1); padding-top: 14px; }
+
+/* ---------- Bottom nav (phone) ---------- */
+.bottom-nav {
+  position: fixed; inset: auto 0 0 0; z-index: 20; display: grid; grid-template-columns: repeat(5, 1fr);
+  height: calc(var(--nav-h) + env(safe-area-inset-bottom)); padding: 8px 6px env(safe-area-inset-bottom);
+  background: var(--bg); border-top: 1px solid var(--line);
+}
+.bottom-nav .tab {
+  display: flex; flex-direction: column; align-items: center; gap: 4px; text-decoration: none;
+  color: var(--ink-2); font-size: 12px; font-weight: 500;
+}
+.tab-icon { position: relative; display: grid; place-items: center; width: 64px; height: 34px; border-radius: var(--pill); }
+.tab.active { color: var(--ink); font-weight: 700; }
+.tab.active .tab-icon { background: var(--gold); color: #123a2b; }
+.tab-dot { position: absolute; top: 2px; right: 18px; width: 9px; height: 9px; border-radius: 50%; background: var(--orange); border: 2px solid var(--bg); }
+
+.bottom-nav.dark { background: var(--side-dark); border-top-color: var(--hero-border); }
+.bottom-nav.dark .tab { color: #c9d3cc; }
+.bottom-nav.dark .tab.active { color: #f3efe4; }
+
+/* ---------- Profile menu ---------- */
+.menu-wrap { position: relative; }
+.menu-wrap > button.avatar { border: 0; }
+.menu {
+  position: absolute; z-index: 40; min-width: 210px; display: flex; flex-direction: column; gap: 10px;
+  padding: 14px; background: var(--surface); color: var(--ink); border: 1px solid var(--line);
+  border-radius: 16px; box-shadow: 0 12px 32px rgb(0 0 0 / .14);
+}
+.menu-down { top: calc(100% + 8px); }
+.menu-up { bottom: calc(100% + 8px); }
+.menu-right { right: 0; }
+.menu-left { left: 0; }
+.menu .seg button { display: grid; place-items: center; padding: 8px; }
+.menu-item {
+  display: block; padding: 10px 12px; border-radius: 10px; border: 0; background: var(--surface-2);
+  text-align: left; text-decoration: none; font-weight: 600; font-size: 14px;
+}
+.menu-item:hover { filter: brightness(.97); }
+.side-link .pill { height: 20px; padding: 0 8px; font-size: 11px; }
+.me-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
+
+/* Coach app on phones: brand + account menu (the sidebar is hidden there) */
+.coach-topbar {
+  position: sticky; top: 0; z-index: 25; display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 16px; background: var(--side-dark); color: #f3efe4;
+}
+@media (min-width: 768px) { .coach-topbar { display: none; } }
+
+.menu-who { display: flex; flex-direction: column; gap: 2px; min-width: 0; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+.menu-item { display: flex; align-items: center; gap: 8px; }
+.menu-wrap > button.avatar.sm { width: 36px; height: 36px; font-size: 13px; }

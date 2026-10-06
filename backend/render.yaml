@@ -1,0 +1,26 @@
+# Render blueprint for the Yuktara API (Docker web service).
+# Secrets are `sync: false`: Render asks for them on first deploy and never reads them from git.
+services:
+  - type: web
+    name: yuktara-api
+    runtime: docker
+    rootDir: backend
+    dockerfilePath: ./Dockerfile
+    plan: free
+    region: oregon
+    healthCheckPath: /health
+    # Off: the Deploy workflow triggers Render only after the database migration succeeds.
+    autoDeploy: false
+    envVars:
+      - key: ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_JWT_SECRET
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: ALLOWED_ORIGINS
+        sync: false

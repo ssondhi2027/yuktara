@@ -1,0 +1,46 @@
+.food .page-head { margin-bottom: 16px; }
+.date-nav { display: flex; align-items: center; gap: 6px; font-size: 17px; }
+.icon-btn.plain { border: 0; background: transparent; width: 36px; height: 36px; }
+.icon-btn.plain:disabled { opacity: .3; cursor: default; }
+
+.food-layout { display: grid; gap: 16px; align-items: start; }
+@media (min-width: 1000px) { .food-layout { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 24px; } }
+
+.food-summary { display: flex; flex-direction: column; gap: 12px; }
+.kcal-big { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.kcal-big .num { font-size: 44px; line-height: 1; font-weight: 700; }
+.food-summary hr { border: 0; border-top: 1px solid var(--line); margin: 4px 0; width: 100%; }
+
+.rating { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.rate-btn {
+  height: 50px; border-radius: 14px; border: 1px solid var(--line-strong); background: var(--surface);
+  font-weight: 600; font-size: 16px; color: var(--ink);
+}
+.rate-btn[aria-pressed='true'] { background: var(--primary); border-color: var(--primary); color: var(--on-primary); }
+
+.meal-card {
+  display: flex; align-items: center; gap: 14px; padding: 12px; background: var(--surface);
+  border: 1px solid var(--line); border-radius: 20px;
+}
+.meal-thumb { flex: none; width: 72px; height: 72px; border-radius: 14px; display: grid; place-items: center; overflow: hidden; }
+.meal-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.meal-thumb.peach { background: var(--peach); color: var(--peach-ink); }
+.meal-thumb.mint { background: var(--mint); color: var(--mint-ink); }
+.meal-thumb.sage { background: var(--sage); color: var(--leaf); }
+.meal-thumb.sand { background: var(--chip); color: var(--ink-2); }
+.meal-title { font-family: var(--font-head); font-weight: 600; font-size: 19px; }
+
+.missing-meal {
+  display: flex; flex-direction: column; gap: 12px; padding: 16px; border-radius: 20px;
+  border: 1.5px dashed var(--line-strong);
+}
+.missing-meal .btn { padding: 0 10px; }
+
+.meal-preview { width: 100%; max-height: 220px; object-fit: cover; border-radius: 16px; }
+.search-results { list-style: none; margin: 4px 0 0; padding: 0; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.search-results li + li { border-top: 1px solid var(--line); }
+.search-results button {
+  width: 100%; display: flex; justify-content: space-between; gap: 8px; padding: 10px 12px;
+  background: var(--surface); border: 0; text-align: left;
+}
+.search-results button:hover { background: var(--surface-2); }

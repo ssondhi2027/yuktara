@@ -1,0 +1,12 @@
+{
+  "name": "Yuktara",
+  "short_name": "Yuktara",
+  "description": "Weekly coaching for training and nutrition.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#F8F5EE",
+  "theme_color": "#123A2B",
+  "icons": [
+    { "src": "/icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

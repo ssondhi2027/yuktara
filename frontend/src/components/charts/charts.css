@@ -1,0 +1,43 @@
+/* Day ring */
+.day-ring-label { font: 600 15px var(--font-body); fill: #123a2b; }
+.day-ring-num { font: 700 46px var(--font-head); fill: #f8f5ee; }
+.day-ring-sub { font: 500 15px var(--font-body); fill: #d6ddd7; }
+
+/* Line chart */
+.line-chart { position: relative; width: 100%; }
+.line-chart svg { display: block; overflow: visible; }
+.chart-dot {
+  position: absolute; width: 12px; height: 12px; margin: -6px 0 0 -6px; border-radius: 50%;
+  background: var(--surface); border: 2.5px solid var(--chart);
+}
+.chart-dot.last { width: 15px; height: 15px; margin: -7.5px 0 0 -7.5px; background: var(--chart); }
+.chart-goal { position: absolute; right: 18px; font: 600 13px var(--font-body); color: var(--leaf); }
+.chart-value { position: absolute; transform: translateX(-60%); font: 700 15px var(--font-head); white-space: nowrap; }
+.chart-labels { position: absolute; left: 0; right: 0; bottom: 0; display: flex; justify-content: space-between; font-size: 12px; color: var(--ink-2); }
+.chart-labels span { width: 0; display: flex; justify-content: center; white-space: nowrap; }
+.chart-labels .strong { font-weight: 700; color: var(--ink); }
+
+/* Plan blocks */
+.plan-bars { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; align-items: end; }
+.plan-bar { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.plan-bar .num { font-size: 16px; }
+.plan-block { width: 100%; border-radius: 12px; }
+.plan-block.hit { background: var(--leaf); }
+.plan-block.miss { background: var(--orange); }
+.plan-block.partial { background: var(--sage); border: 1.5px dashed var(--leaf); }
+
+/* Training vs food */
+.pair-bars { display: flex; justify-content: space-between; align-items: flex-end; gap: 8px; min-height: 110px; }
+.pair { display: flex; flex-direction: column; align-items: center; gap: 6px; flex: 1; }
+.pair-cols { display: flex; gap: 3px; align-items: flex-end; }
+.pair-col { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.pair-col i { display: block; width: 12px; border-radius: 3px; }
+.pair-col i.training { background: var(--bar-training); }
+.pair-col i.food { background: var(--leaf); }
+.pair .strong { font-weight: 700; }
+
+/* Score bar */
+.scale-bar { display: flex; gap: 4px; }
+.scale-bar i { flex: 1; height: 7px; border-radius: 4px; background: var(--chip); }
+.scale-bar i.on.ink { background: var(--scale-on); }
+.scale-bar i.on.warn { background: var(--orange); }

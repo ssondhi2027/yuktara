@@ -1,0 +1,84 @@
+.train .page-head { align-items: center; }
+
+/* Map card */
+.map-card { position: relative; padding: 0; overflow: hidden; display: flex; flex-direction: column; height: min(66vh, 640px); min-height: 460px; }
+.map-top { position: absolute; top: 16px; left: 18px; right: 16px; z-index: 2; display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; pointer-events: none; }
+.map-top .seg { pointer-events: auto; }
+.map-top .seg button { padding: 6px 12px; font-size: 13px; }
+.map-legend { display: flex; flex-direction: column; gap: 4px; }
+.map-legend .eyebrow { margin-bottom: 2px; }
+.map-hint { flex: 1; text-align: center; padding: 0 8px; }
+@media (max-width: 767.98px) { .map-hint { display: none; } }
+.legend-row { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.legend-row i { width: 14px; height: 14px; border-radius: 4px; border: 1px solid var(--line); }
+.map-canvas { position: relative; flex: 1; min-height: 0; touch-action: none; }
+.map-canvas canvas { outline: none; }
+.map-controls { position: absolute; left: 16px; right: 16px; bottom: 16px; z-index: 2; display: flex; justify-content: space-between; align-items: center; pointer-events: none; }
+.map-controls > * { pointer-events: auto; }
+.map-controls .map-hint { pointer-events: none; }
+.map-loading {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); padding: 8px 14px; border-radius: var(--pill);
+  background: var(--surface-2); font-size: 13px; font-weight: 600; color: var(--ink-2);
+}
+.map-tip {
+  position: absolute; z-index: 3; transform: translate(14px, -50%); max-width: 240px; pointer-events: none;
+  display: flex; flex-direction: column; gap: 2px; padding: 8px 12px; border-radius: 10px;
+  background: #123a2b; color: #f8f5ee; font-size: 12px; box-shadow: 0 6px 18px rgb(0 0 0 / .18);
+}
+.map-tip b { font-size: 13px; }
+.map-tip span { opacity: .8; }
+@media (hover: none) { .map-tip { display: none; } }
+@media (min-width: 768px) { .map-card { height: min(70vh, 760px); } }
+
+/* Phone: horizontal chips */
+.muscle-chips { display: flex; gap: 10px; overflow-x: auto; margin: 0 -16px; padding: 2px 16px 6px; scroll-snap-type: x proximity; scrollbar-width: none; }
+.muscle-chips::-webkit-scrollbar { display: none; }
+.muscle-chip {
+  flex: none; display: flex; align-items: center; gap: 10px; height: 52px; padding: 0 10px 0 16px; scroll-snap-align: start;
+  border-radius: var(--pill); border: 1px solid var(--line-strong); background: var(--surface); font-size: 17px; font-weight: 600; color: var(--ink);
+}
+.muscle-chip.active, .muscle-row.active { border-color: var(--gold); box-shadow: 0 0 0 2px var(--gold) inset; }
+.count-badge { display: inline-grid; place-items: center; min-width: 32px; height: 30px; padding: 0 8px; border-radius: var(--pill); background: var(--chip); font-size: 15px; }
+.muscle-dot { display: inline-block; flex: none; width: 14px; height: 14px; border-radius: 50%; border: 1px solid var(--line); }
+
+/* Tablet: 4-column grid */
+.muscle-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.muscle-grid .muscle-chip { height: 46px; border-radius: 12px; font-size: 15px; padding: 0 10px 0 14px; }
+.muscle-grid .count-badge { height: 24px; min-width: 26px; font-size: 13px; }
+
+/* Desktop: two columns */
+.train-desktop { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 24px; align-items: stretch; }
+.train-desktop .map-card { height: auto; flex: 1; min-height: 720px; }
+.muscles-panel { display: flex; flex-direction: column; }
+.muscle-list { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.muscle-row {
+  display: flex; align-items: center; gap: 10px; height: 46px; padding: 0 10px 0 14px; border-radius: 12px;
+  border: 1px solid var(--line-strong); background: var(--surface); font-weight: 600; text-align: left; color: var(--ink);
+}
+.muscle-row:hover, .muscle-chip:hover { background: var(--surface-2); }
+.untrained { margin-top: 14px; padding: 14px; border-radius: 16px; background: var(--peach); color: var(--peach-ink); display: flex; flex-direction: column; gap: 10px; }
+.untrained-chip { height: 40px; padding: 0 16px; border-radius: var(--pill); border: 1px solid var(--peach-ink); background: var(--surface); color: var(--peach-ink); font-weight: 600; }
+.muscles-panel .today-bar { margin-top: 14px; }
+
+/* Today bar */
+.today-bar { display: flex; align-items: center; gap: 12px; padding: 16px 16px 16px 22px; border-radius: var(--radius-lg); background: var(--hero-bg); border: 1px solid var(--hero-border); color: var(--on-forest); }
+.today-sets { font-size: 22px; font-weight: 700; display: block; }
+
+/* Muscle sheet */
+.muscle-note { display: flex; gap: 10px; padding: 12px 14px; border-radius: 14px; }
+.muscle-note.research { background: var(--mint); color: var(--mint-ink); }
+.muscle-note.coach_tip { background: var(--surface-2); color: var(--ink); }
+.muscle-note p { color: var(--ink); margin-top: 2px; }
+
+/* Muscle detail (sheet and desktop panel) */
+.back-btn { display: inline-flex; align-items: center; gap: 4px; border: 0; background: none; padding: 0; color: var(--good); font-weight: 600; }
+.panel-scroll { flex: 1; min-height: 0; overflow-y: auto; margin-right: -8px; padding-right: 8px; max-height: 520px; }
+.muscle-dot.lg { width: 18px; height: 18px; }
+.ex-title { font-size: 16px; margin: 6px 0 8px; }
+.ex-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.ex-item { padding: 12px 14px; border-radius: 14px; background: var(--surface-2); }
+.ex-meta { display: flex; gap: 10px; margin-top: 2px; }
+.ex-meta span + span::before { content: '·'; margin-right: 10px; }
+.ex-cue { margin-top: 6px; color: var(--ink-2); }
+.model-credit { padding: 0 6px; }
+.model-credit a { color: inherit; }

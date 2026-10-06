@@ -1,0 +1,29 @@
+{
+  "name": "yuktara",
+  "version": "1.0.0",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ssondhi2027/yuktara.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/ssondhi2027/yuktara/issues"
+  },
+  "homepage": "https://github.com/ssondhi2027/yuktara#readme",
+  "description": "",
+  "devDependencies": {
+    "supabase": "^2.119.0"
+  },
+  "dependencies": {
+    "@supabase/server": "^1.9.1"
+  }
+}

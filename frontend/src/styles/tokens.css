@@ -1,0 +1,168 @@
+/* Yuktara brand tokens — from Brand Board v2 (Oct 2026). */
+:root {
+  /* Light */
+  --bg: #f8f5ee;            /* Cream */
+  --surface: #ffffff;
+  --surface-2: #f3efe4;     /* tiles inside cards */
+  --ink: #123a2b;           /* Forest, also primary text */
+  --ink-2: #4f5d55;         /* secondary text */
+  --ink-3: #7b857f;         /* tertiary text */
+  --line: #e7e1d3;
+  --line-strong: #d6cfbf;
+  --chip: #ece7dc;          /* segmented control track, "none yet" */
+
+  --forest: #123a2b;
+  --on-forest: #f8f5ee;
+  --on-forest-2: #b9c7bd;
+  --gold: #ddac4f;
+  --on-gold: #123a2b;
+  --green: #1f6a45;
+  --leaf: #5a8a3c;          /* progress graphics on light */
+  --leaf-soft: #9bc185;     /* body map 1–9 sets */
+  --orange: #c2410c;
+
+  --mint: #dcebdf;          /* on-track pill, question callout */
+  --mint-ink: #1f6a45;
+  --sage: #e5eed9;          /* chart fills, selected list row */
+  --peach: #fde7d9;         /* slipping, not trained yet */
+  --peach-ink: #b23a0b;
+  --danger: #a3372a;
+  --danger-soft: #f6e1dc;
+  --danger-ink: #7e2a1f;
+
+  --primary: var(--forest);
+  --on-primary: #ffffff;
+  --accent: var(--gold);
+  --chart: var(--green);
+  --chart-fill: var(--sage);
+  --macro-p: var(--green);
+  --macro-c: var(--leaf);
+  --macro-f: var(--orange);
+  --band-high: #3f7a50;
+  --band-some: #9bc185;
+  --band-none: #e9e3d6;
+
+  --radius-sm: 10px;
+  --radius: 18px;
+  --radius-lg: 24px;
+  --pill: 999px;
+  --shadow: 0 1px 2px rgb(18 58 43 / 0.04);
+
+  --font-head: 'Jost', system-ui, sans-serif;
+  --font-body: 'Instrument Sans', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+
+  --good: var(--green);
+  --scale-on: #123a2b;
+  --bar-training: #123a2b;
+  --side-dark: #123a2b;
+  --hero-bg: var(--forest);
+  --hero-border: transparent;
+  --today-bg: #123a2b;
+  --today-ink: #f8f5ee;
+  --today-plan: var(--gold);
+  --avatar-ink: var(--green);
+  --nav-h: 76px;
+  color-scheme: light;
+}
+
+/* Dark. Keep these two blocks identical: one for the in-app choice, one for the OS setting. */
+:root[data-theme='dark'] {
+  --bg: #0a1c15;            /* Ground */
+  --surface: #12291f;
+  --surface-2: #183327;
+  --ink: #f3efe4;
+  --ink-2: #b5bfb7;
+  --ink-3: #8a968f;
+  --line: #234235;
+  --line-strong: #2f5242;
+  --chip: #1c3a2d;
+  --forest: #12291f;
+  --on-forest: #f3efe4;
+  --on-forest-2: #a9b6ad;
+  --leaf: #8cc27a;
+  --leaf-soft: #5f8f50;
+  --orange: #f28c4e;
+  --mint: #1f3d2f;
+  --mint-ink: #8cc27a;
+  --sage: #1c3a2b;
+  --peach: #3b2118;
+  --peach-ink: #f28c4e;
+  --danger: #f08a7a;
+  --danger-soft: #3b1f1a;
+  --danger-ink: #f6b4a8;
+  --logo-fig-top: #f3efe4;
+  --logo-fig-bottom: #d9d2c3;
+  --primary: var(--gold);
+  --on-primary: #123a2b;
+  --chart: var(--gold);
+  --chart-fill: #2a3a22;
+  --macro-p: #8cc27a;
+  --macro-c: #ddac4f;
+  --macro-f: #f28c4e;
+  --band-high: #8cc27a;
+  --band-some: #4f7a45;
+  --band-none: #2a4537;
+  --good: #8cc27a;
+  --scale-on: #8cc27a;
+  --bar-training: #ddac4f;
+  --side-dark: #0e2219;
+  --hero-bg: #12291f;
+  --hero-border: #234235;
+  --today-bg: #ddac4f;
+  --today-ink: #123a2b;
+  --today-plan: #123a2b;
+  --avatar-ink: #8cc27a;
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --bg: #0a1c15;            /* Ground */
+    --surface: #12291f;
+    --surface-2: #183327;
+    --ink: #f3efe4;
+    --ink-2: #b5bfb7;
+    --ink-3: #8a968f;
+    --line: #234235;
+    --line-strong: #2f5242;
+    --chip: #1c3a2d;
+    --forest: #12291f;
+    --on-forest: #f3efe4;
+    --on-forest-2: #a9b6ad;
+    --leaf: #8cc27a;
+    --leaf-soft: #5f8f50;
+    --orange: #f28c4e;
+    --mint: #1f3d2f;
+    --mint-ink: #8cc27a;
+    --sage: #1c3a2b;
+    --peach: #3b2118;
+    --peach-ink: #f28c4e;
+    --danger: #f08a7a;
+    --danger-soft: #3b1f1a;
+    --danger-ink: #f6b4a8;
+    --logo-fig-top: #f3efe4;
+    --logo-fig-bottom: #d9d2c3;
+    --primary: var(--gold);
+    --on-primary: #123a2b;
+    --chart: var(--gold);
+    --chart-fill: #2a3a22;
+    --macro-p: #8cc27a;
+    --macro-c: #ddac4f;
+    --macro-f: #f28c4e;
+    --band-high: #8cc27a;
+    --band-some: #4f7a45;
+    --band-none: #2a4537;
+    --good: #8cc27a;
+    --scale-on: #8cc27a;
+    --bar-training: #ddac4f;
+    --side-dark: #0e2219;
+    --hero-bg: #12291f;
+    --hero-border: #234235;
+    --today-bg: #ddac4f;
+    --today-ink: #123a2b;
+    --today-plan: #123a2b;
+    --avatar-ink: #8cc27a;
+    color-scheme: dark;
+  }
+}

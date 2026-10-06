@@ -1,0 +1,77 @@
+.home { display: flex; flex-direction: column; gap: 16px; }
+.home .page-head { margin-bottom: 4px; }
+
+/* Week hero (phone) */
+.week-hero { display: flex; align-items: center; gap: 20px; padding: 20px 22px; }
+.hero-stats { display: grid; grid-template-columns: 1fr auto; gap: 10px 12px; margin: 12px 0 0; font-size: 17px; }
+.hero-stats dt { color: var(--on-forest-2); }
+.hero-stats dd { margin: 0; font-weight: 700; text-align: right; font-family: var(--font-head); }
+@media (max-width: 400px) {
+  .week-hero { gap: 12px; padding: 16px; }
+  .week-hero svg { width: 140px; height: 140px; }
+  .hero-stats { font-size: 15px; }
+}
+
+/* Check-in banner */
+.banner {
+  display: flex; align-items: center; gap: 14px; padding: 16px 16px 16px 18px;
+  border-radius: var(--radius-lg); background: var(--gold); color: #123a2b;
+}
+.banner-icon { display: grid; place-items: center; flex: none; width: 46px; height: 46px; border-radius: 50%; background: #123a2b; color: var(--gold); }
+.banner-title { font-family: var(--font-head); font-size: 19px; }
+.banner-sub { font-size: 15px; }
+.banner.done { background: var(--mint); color: var(--mint-ink); }
+.banner.done .banner-icon { background: var(--green); color: #fff; }
+
+/* Week strip (tablet / desktop) */
+.week-strip { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px; }
+.week-strip li { background: var(--surface-2); border-radius: 16px; padding: 12px 10px; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.week-strip li.today { background: var(--today-bg); color: var(--today-ink); }
+.week-strip li.today .faint { color: inherit; opacity: .75; }
+.day-name { color: inherit; opacity: .8; }
+.day-num { font-size: 22px; }
+.day-workout { display: flex; gap: 4px; align-items: flex-start; font-size: 13px; font-weight: 600; color: var(--ink-2); line-height: 1.2; }
+.day-workout.done { color: var(--good); }
+.day-workout.skipped { color: var(--orange); }
+.day-workout.planned { color: var(--gold); }
+.week-strip li.today .day-workout.planned { color: var(--today-plan); }
+.day-workout svg { flex: none; margin-top: 1px; }
+
+/* Cards grid */
+.home-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+@media (min-width: 768px) { .home-grid { gap: 16px; } }
+@media (min-width: 1200px) { .home-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+
+.workout-mini { display: flex; flex-direction: column; gap: 4px; }
+.workout-mini .btn { margin-top: auto; }
+.workout-name { font-size: 22px; font-weight: 700; margin-top: 2px; }
+.mini-list { list-style: none; padding: 0; margin: 10px 0 16px; display: flex; flex-direction: column; gap: 6px; font-size: 15px; }
+.exercise-rows li { font-size: 15px; }
+
+.kcal { margin: 8px 0 12px; display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+.kcal .num { font-size: 34px; line-height: 1; font-weight: 700; }
+.macro-num { margin: 2px 0 6px; }
+.macro-num .num { font-size: 15px; }
+
+.coach-note { display: flex; flex-direction: column; gap: 16px; }
+.coach-body { font-size: 17px; line-height: 1.45; }
+.reply { margin-top: auto; display: flex; flex-direction: column; gap: 6px; }
+.dark-input { background: rgb(255 255 255 / .06); border-color: rgb(255 255 255 / .14); color: var(--on-forest); }
+.dark-input::placeholder { color: var(--on-forest-2); }
+
+/* Phone habit tiles */
+.habit-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.tile-card { display: flex; flex-direction: column; gap: 4px; padding: 16px 14px; border-radius: 20px; }
+.tile-card .num { font-size: 20px; }
+
+/* Live data: first days and empty states */
+.welcome { display: flex; gap: 14px; align-items: flex-start; background: var(--mint); border-color: transparent; }
+.welcome-icon { display: grid; place-items: center; flex: none; width: 40px; height: 40px; border-radius: 50%; background: var(--green); color: #fff; }
+.welcome p { margin-top: 4px; color: var(--ink-2); }
+.banner.soft { background: var(--surface-2); color: var(--ink); }
+.banner.soft .banner-icon { background: var(--chip); color: var(--ink); }
+.week-strip li.before-start { opacity: .55; }
+.waiting-note { margin: 4px 0 2px; }
+.empty-block { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; padding: 8px 0; }
+.habit-tiles.four { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+button.tile-card { text-align: left; color: var(--ink); font: inherit; cursor: pointer; }

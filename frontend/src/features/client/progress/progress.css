@@ -1,0 +1,12 @@
+.progress-grid { display: grid; gap: 14px; }
+@media (min-width: 1000px) { .progress-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; align-items: start; } }
+
+.weight-card { display: flex; flex-direction: column; gap: 18px; }
+.num.big { display: block; font-size: 42px; line-height: 1.1; font-weight: 700; }
+.lg-pill { height: 36px; padding: 0 16px; font-size: 15px; }
+
+.stat-card { display: flex; flex-direction: column; gap: 6px; }
+.stat-card .num { font-size: 32px; font-weight: 700; }
+.strong-600 { font-weight: 600; }
+
+.coach-note-p { display: flex; flex-direction: column; gap: 16px; }

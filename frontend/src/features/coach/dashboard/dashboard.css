@@ -1,0 +1,44 @@
+.coach-dash { display: flex; flex-direction: column; gap: 16px; max-width: 1280px; }
+.coach-dash .page-head { margin-bottom: 4px; align-items: center; }
+
+.search {
+  display: flex; align-items: center; gap: 8px; height: 44px; width: 240px; padding: 0 14px;
+  border: 1px solid var(--line-strong); border-radius: 12px; background: var(--surface); color: var(--ink-2);
+}
+.search input { border: 0; outline: 0; background: transparent; width: 100%; }
+
+.stat-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+@media (min-width: 1000px) { .stat-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; } }
+.stat { padding: 16px 18px; display: flex; flex-direction: column; gap: 4px; }
+.stat-value { font-size: 32px; font-weight: 600; line-height: 1.15; }
+.stat-value small { font-size: 20px; color: var(--ink-2); }
+
+.dash-two { display: grid; gap: 16px; align-items: start; }
+@media (min-width: 1000px) { .dash-two { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
+
+.queue-row { display: flex; align-items: center; gap: 12px; }
+.attention { display: flex; flex-direction: column; gap: 10px; padding: 14px 16px; border-radius: 16px; background: var(--surface-2); }
+
+.clients-head { flex-wrap: wrap; }
+.filter-row { gap: 6px; flex-wrap: wrap; }
+.table-wrap { overflow-x: auto; margin: 0 -20px; padding: 0 20px; }
+.clients-table { width: 100%; border-collapse: collapse; min-width: 820px; }
+.clients-table th { text-align: left; font-size: 12px; font-weight: 600; color: var(--ink-2); padding: 8px 8px 10px 0; border-bottom: 1px solid var(--line); }
+.clients-table td { padding: 12px 8px 12px 0; border-bottom: 1px solid var(--line); font-size: 14px; vertical-align: middle; }
+.clients-table tr:last-child td { border-bottom: 0; }
+.clients-table .strong { font-weight: 700; }
+
+/* Live data */
+.empty-roster { display: flex; flex-direction: column; gap: 12px; align-items: flex-start; }
+.invite-code { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 14px 16px; border-radius: 16px; background: var(--surface-2); }
+.invite-code .mono { font-size: 20px; letter-spacing: .06em; }
+.client-row { cursor: pointer; }
+.client-row:hover td { background: var(--surface-2); }
+.row-link { border: 0; background: none; padding: 0; color: inherit; text-align: left; }
+.new-pill { margin-left: 6px; height: 20px; padding: 0 8px; }
+
+/* Client sheet */
+.answers-list { display: grid; gap: 8px; margin: 0; }
+.answers-list > div { display: grid; grid-template-columns: 110px 1fr; gap: 10px; font-size: 14px; }
+.answers-list dt { color: var(--ink-2); }
+.answers-list dd { margin: 0; }

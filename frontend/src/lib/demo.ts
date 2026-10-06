@@ -1,0 +1,557 @@
+// In-memory demo data: Sunday, Oct 4 2026, week 6 of Aisha's 12-week program,
+// as drawn in the "Yuktara — Client & Coach UI" wireframes. Mutations change
+// this copy so the prototype responds to clicks; a reload resets it.
+
+import type { BodyModel, ExerciseLevel, MealType, MuscleGroup, OnPlan } from '@/types/db'
+import type {
+  CheckinDraft, CheckinLists, CheckinReview, ClientDetail, ClientHome, ClientProgress, ClientRow,
+  CoachDashboard, CoachNote, DailyPatch, DaySummary, FoodDay, Meal, MuscleDetail, Person, QueueItem,
+  Targets, TodayWorkout, TrainWeek,
+} from './api'
+import type { GoalType } from '@/types/db'
+import { addDays, pinToday } from './dates'
+import { getCurrentUser } from './session'
+import { isDemo } from './supabase'
+
+const TODAY = '2026-10-04'
+const WEEK_START = '2026-09-28'
+
+// Demo mode runs on the date the wireframes were drawn for.
+if (isDemo) pinToday(TODAY)
+
+/**
+ * The demo accounts (demo mode only; passwords aren't checked):
+ * coach@demo.test opens the coach app, any other email is the client.
+ */
+export const DEMO_ACCOUNTS = {
+  coach: { id: 'coach-ss', email: 'coach@demo.test', full_name: 'Simranvir Sondhi' },
+  client: { id: 'c-aisha', email: 'aisha.rahman@example.com', full_name: 'Aisha Rahman' },
+  invite_code: 'SIMRAN-7Q4',
+}
+
+const person = (id: string, full_name: string): Person => {
+  const parts = full_name.split(' ')
+  return { id, full_name, first_name: parts[0], initials: parts.map((p) => p[0]).join('').slice(0, 2).toUpperCase() }
+}
+
+const coach = person('coach-ss', 'Simranvir Sondhi')
+const signedIn = () => {
+  const u = getCurrentUser()
+  return u?.full_name ? person(u.id, u.full_name) : null
+}
+const aisha = person('c-aisha', 'Aisha Rahman')
+
+// ---------- Client: Aisha ----------
+const targets: Targets = { calories: 2100, protein_g: 140, carbs_g: 210, fat_g: 70, water_ml: 2500, steps: 9000, sleep_h: 7.5 }
+
+const workout: TodayWorkout = {
+  name: 'Full body C',
+  duration_min: 50,
+  sets_done: 3,
+  sets_total: 19,
+  exercises: [
+    { name: 'Back squat', sets: 4, reps: '6', weight_kg: 82.5 },
+    { name: 'Romanian deadlift', sets: 3, reps: '8', weight_kg: 70 },
+    { name: 'Dumbbell bench press', sets: 3, reps: '10', weight_kg: 18 },
+    { name: 'Seated cable row', sets: 3, reps: '12', weight_kg: 45 },
+    { name: 'Walking lunge', sets: 3, reps: '10', note: 'each leg' },
+    { name: 'Plank', sets: 3, reps: '45 s' },
+  ],
+}
+
+const days: DaySummary[] = ([
+  { date: '2026-09-28', workout: { name: 'Upper A', status: 'done' }, meals_on_plan: 3, meals_planned: 3, steps: 9410 },
+  { date: '2026-09-29', workout: { name: 'Lower A', status: 'done' }, meals_on_plan: 3, meals_planned: 3, steps: 10220 },
+  { date: '2026-09-30', workout: null, meals_on_plan: 2, meals_planned: 3, steps: 7080 },
+  { date: '2026-10-01', workout: { name: 'Upper B', status: 'skipped' }, meals_on_plan: 2, meals_planned: 3, steps: 6010 },
+  { date: '2026-10-02', workout: null, meals_on_plan: 3, meals_planned: 3, steps: 8790 },
+  { date: '2026-10-03', workout: null, meals_on_plan: 1, meals_planned: 2, steps: 11270 },
+  { date: TODAY, workout: { name: 'Full body C', status: 'planned' }, meals_on_plan: 3, meals_planned: 3, steps: 6420 },
+] as Omit<DaySummary, 'is_today' | 'logged'>[]).map((d) => ({ ...d, is_today: d.date === TODAY, logged: d.date !== TODAY }))
+
+const meal = (id: string, meal_type: MealType, time: string, title: string, calories: number, p: number, c: number, f: number, on_plan: OnPlan = 'yes'): Meal => ({
+  id, meal_type, eaten_at: `${TODAY}T${time}:00`, title, calories, protein_g: p, carbs_g: c, fat_g: f, on_plan, photo_url: null,
+})
+
+const foodDays = new Map<string, FoodDay>()
+foodDays.set(TODAY, {
+  date: TODAY,
+  targets,
+  planned: ['breakfast', 'snack', 'lunch', 'dinner'],
+  day_rating: 'yes',
+  meals: [
+    meal('m1', 'breakfast', '08:10', 'Greek yogurt, berries, granola', 420, 32, 48, 11),
+    meal('m2', 'snack', '10:45', 'Protein shake', 210, 30, 12, 5),
+    meal('m3', 'lunch', '12:30', 'Chicken rice bowl', 610, 48, 72, 14),
+  ],
+})
+
+function pastFoodDay(date: string): FoodDay {
+  const at = (t: string) => `${date}T${t}:00`
+  return {
+    date,
+    targets,
+    planned: ['breakfast', 'lunch', 'dinner'],
+    day_rating: 'yes',
+    meals: [
+      { ...meal(`${date}-b`, 'breakfast', '08:00', 'Oats, whey, banana', 480, 38, 66, 9), eaten_at: at('08:00') },
+      { ...meal(`${date}-l`, 'lunch', '12:45', 'Turkey wrap and salad', 590, 44, 58, 18), eaten_at: at('12:45') },
+      { ...meal(`${date}-d`, 'dinner', '19:10', 'Salmon, potatoes, greens', 720, 46, 70, 26), eaten_at: at('19:10') },
+    ],
+  }
+}
+
+let bodyModel: BodyModel = 'female'
+
+const habitsToday = { steps_today: 6420 as number | null, water_ml_today: 1500 as number | null, sleep_last_night: (7 + 10 / 60) as number | null, weight_today: 71.6 as number | null }
+const demoTargets: Record<string, Targets> = {}
+
+const sets: Record<MuscleGroup, number> = {
+  chest: 9, shoulders: 6, biceps: 4, triceps: 6, forearms: 0, abs: 3, obliques: 0, traps: 2,
+  upper_back: 8, lats: 8, lower_back: 0, glutes: 10, quads: 12, hamstrings: 6, adductors: 2, calves: 4,
+}
+
+// Exercise library: muscle roles drive the body map (each working set counts
+// once for every primary muscle of its exercise).
+const library: { name: string; level: ExerciseLevel; equipment: string; primary: MuscleGroup[]; secondary: MuscleGroup[]; week: number; cue: string }[] = [
+  { name: "Barbell bench press", level: 'intermediate', equipment: 'barbell', primary: ['chest'], secondary: ['triceps', 'shoulders'], week: 0, cue: "Feet planted, bar to mid-chest, press back over the shoulders." },
+  { name: "Dumbbell bench press", level: 'beginner', equipment: 'dumbbells', primary: ['chest'], secondary: ['triceps', 'shoulders'], week: 6, cue: "Shoulder blades pinned, elbows about 45 degrees." },
+  { name: "Incline dumbbell press", level: 'beginner', equipment: 'dumbbells', primary: ['chest'], secondary: ['shoulders', 'triceps'], week: 3, cue: "Bench at 30 degrees, lower to the upper chest." },
+  { name: "Push-up", level: 'beginner', equipment: 'bodyweight', primary: ['chest'], secondary: ['triceps', 'shoulders', 'abs'], week: 0, cue: "Body in one line, chest to the floor." },
+  { name: "Cable fly", level: 'beginner', equipment: 'cable', primary: ['chest'], secondary: ['shoulders'], week: 0, cue: "Soft elbows, hug a big tree." },
+  { name: "Overhead press", level: 'intermediate', equipment: 'barbell', primary: ['shoulders'], secondary: ['triceps', 'traps'], week: 3, cue: "Squeeze glutes, press up and slightly back." },
+  { name: "Seated dumbbell shoulder press", level: 'beginner', equipment: 'dumbbells', primary: ['shoulders'], secondary: ['triceps'], week: 0, cue: "Back against the pad, press to just short of lockout." },
+  { name: "Lateral raise", level: 'beginner', equipment: 'dumbbells', primary: ['shoulders'], secondary: ['traps'], week: 3, cue: "Lead with the elbows, stop at shoulder height." },
+  { name: "Rear delt fly", level: 'beginner', equipment: 'dumbbells', primary: ['shoulders'], secondary: ['upper_back'], week: 0, cue: "Hinge forward, sweep the arms wide, no swinging." },
+  { name: "Face pull", level: 'beginner', equipment: 'cable', primary: ['shoulders', 'upper_back'], secondary: ['traps'], week: 2, cue: "Pull to the eyes, thumbs back." },
+  { name: "Dumbbell curl", level: 'beginner', equipment: 'dumbbells', primary: ['biceps'], secondary: ['forearms'], week: 4, cue: "Elbows pinned to the sides." },
+  { name: "Barbell curl", level: 'beginner', equipment: 'barbell', primary: ['biceps'], secondary: ['forearms'], week: 0, cue: "No hip swing, full range." },
+  { name: "Hammer curl", level: 'beginner', equipment: 'dumbbells', primary: ['biceps', 'forearms'], secondary: [], week: 0, cue: "Thumbs up the whole way." },
+  { name: "Incline dumbbell curl", level: 'intermediate', equipment: 'dumbbells', primary: ['biceps'], secondary: [], week: 0, cue: "Let the arms hang behind the body." },
+  { name: "Rope pushdown", level: 'beginner', equipment: 'cable', primary: ['triceps'], secondary: [], week: 6, cue: "Elbows still, spread the rope at the bottom." },
+  { name: "Overhead triceps extension", level: 'beginner', equipment: 'cable', primary: ['triceps'], secondary: [], week: 0, cue: "Elbows point forward, reach long." },
+  { name: "Close-grip bench press", level: 'intermediate', equipment: 'barbell', primary: ['triceps', 'chest'], secondary: ['shoulders'], week: 0, cue: "Hands shoulder-width, elbows tucked." },
+  { name: "Dips", level: 'intermediate', equipment: 'bodyweight', primary: ['triceps', 'chest'], secondary: ['shoulders'], week: 0, cue: "Slight lean, shoulders down." },
+  { name: "Farmer's carry", level: 'beginner', equipment: 'dumbbells', primary: ['forearms', 'traps'], secondary: ['obliques', 'abs'], week: 0, cue: "Tall posture, short quick steps." },
+  { name: "Wrist curl", level: 'beginner', equipment: 'dumbbells', primary: ['forearms'], secondary: [], week: 0, cue: "Forearms on the bench, curl just the wrists." },
+  { name: "Reverse curl", level: 'beginner', equipment: 'barbell', primary: ['forearms'], secondary: ['biceps'], week: 0, cue: "Overhand grip, wrists straight." },
+  { name: "Dead hang", level: 'beginner', equipment: 'pull-up bar', primary: ['forearms'], secondary: ['lats'], week: 0, cue: "Shoulders active, breathe." },
+  { name: "Plank", level: 'beginner', equipment: 'bodyweight', primary: ['abs'], secondary: ['obliques'], week: 3, cue: "Ribs down, squeeze glutes, breathe." },
+  { name: "Hanging knee raise", level: 'intermediate', equipment: 'pull-up bar', primary: ['abs'], secondary: ['obliques'], week: 0, cue: "Curl the pelvis up, no swinging." },
+  { name: "Cable crunch", level: 'beginner', equipment: 'cable', primary: ['abs'], secondary: [], week: 0, cue: "Round the spine, hips stay still." },
+  { name: "Dead bug", level: 'beginner', equipment: 'bodyweight', primary: ['abs'], secondary: ['obliques'], week: 0, cue: "Low back stays on the floor." },
+  { name: "Ab wheel rollout", level: 'advanced', equipment: 'ab wheel', primary: ['abs'], secondary: ['lats', 'obliques'], week: 0, cue: "Hips and ribs move together." },
+  { name: "Side plank", level: 'beginner', equipment: 'bodyweight', primary: ['obliques'], secondary: ['abs'], week: 0, cue: "Hips high, straight line head to heel." },
+  { name: "Pallof press", level: 'beginner', equipment: 'cable', primary: ['obliques'], secondary: ['abs'], week: 0, cue: "Resist the twist, press straight out." },
+  { name: "Cable woodchop", level: 'beginner', equipment: 'cable', primary: ['obliques'], secondary: ['abs', 'shoulders'], week: 0, cue: "Rotate through the hips and trunk." },
+  { name: "Suitcase carry", level: 'beginner', equipment: 'dumbbells', primary: ['obliques', 'forearms'], secondary: ['traps'], week: 0, cue: "Weight in one hand, stay level." },
+  { name: "Dumbbell shrug", level: 'beginner', equipment: 'dumbbells', primary: ['traps'], secondary: ['forearms'], week: 0, cue: "Straight up to the ears, pause." },
+  { name: "Seated cable row", level: 'beginner', equipment: 'cable', primary: ['upper_back', 'lats'], secondary: ['biceps'], week: 4, cue: "Chest tall, pull to the belly button." },
+  { name: "Chest-supported dumbbell row", level: 'beginner', equipment: 'dumbbells', primary: ['upper_back', 'lats'], secondary: ['biceps', 'shoulders'], week: 0, cue: "Chest on the pad, drive the elbows back." },
+  { name: "Bent-over barbell row", level: 'intermediate', equipment: 'barbell', primary: ['upper_back', 'lats'], secondary: ['lower_back', 'biceps'], week: 0, cue: "Flat back, bar to the lower ribs." },
+  { name: "Lat pulldown", level: 'beginner', equipment: 'cable', primary: ['lats', 'upper_back'], secondary: ['biceps'], week: 4, cue: "Pull elbows down to the ribs." },
+  { name: "Pull-up", level: 'intermediate', equipment: 'pull-up bar', primary: ['lats', 'upper_back'], secondary: ['biceps', 'forearms'], week: 0, cue: "Full hang to chin over the bar." },
+  { name: "Single-arm dumbbell row", level: 'beginner', equipment: 'dumbbells', primary: ['lats', 'upper_back'], secondary: ['biceps'], week: 0, cue: "Pull the elbow to the hip." },
+  { name: "Straight-arm pulldown", level: 'beginner', equipment: 'cable', primary: ['lats'], secondary: ['triceps'], week: 0, cue: "Arms long, sweep the bar to the thighs." },
+  { name: "Back extension", level: 'beginner', equipment: 'bench', primary: ['lower_back'], secondary: ['glutes', 'hamstrings'], week: 0, cue: "Hinge at the hips, stop in line with the legs." },
+  { name: "Bird dog", level: 'beginner', equipment: 'bodyweight', primary: ['lower_back'], secondary: ['glutes', 'abs'], week: 0, cue: "Reach long, keep the hips square." },
+  { name: "Deadlift", level: 'intermediate', equipment: 'barbell', primary: ['glutes', 'hamstrings', 'lower_back'], secondary: ['quads', 'traps', 'forearms'], week: 0, cue: "Bar over mid-foot, push the floor away." },
+  { name: "Good morning", level: 'intermediate', equipment: 'barbell', primary: ['hamstrings', 'lower_back'], secondary: ['glutes'], week: 0, cue: "Soft knees, hips back, flat back." },
+  { name: "Hip thrust", level: 'beginner', equipment: 'barbell', primary: ['glutes'], secondary: ['hamstrings'], week: 0, cue: "Chin tucked, ribs down, pause at the top." },
+  { name: "Glute bridge", level: 'beginner', equipment: 'bodyweight', primary: ['glutes'], secondary: ['hamstrings'], week: 0, cue: "Drive through the heels, squeeze at the top." },
+  { name: "Cable kickback", level: 'beginner', equipment: 'cable', primary: ['glutes'], secondary: [], week: 0, cue: "Small lean, kick back without arching." },
+  { name: "Back squat", level: 'intermediate', equipment: 'barbell', primary: ['quads', 'glutes'], secondary: ['adductors', 'lower_back'], week: 4, cue: "Brace, sit between the hips, drive the floor away." },
+  { name: "Goblet squat", level: 'beginner', equipment: 'dumbbells', primary: ['quads', 'glutes'], secondary: ['abs', 'adductors'], week: 0, cue: "Elbows inside the knees, chest up." },
+  { name: "Leg press", level: 'beginner', equipment: 'machine', primary: ['quads'], secondary: ['glutes', 'adductors'], week: 4, cue: "Lower until the hips start to tuck." },
+  { name: "Walking lunge", level: 'beginner', equipment: 'dumbbells', primary: ['quads', 'glutes'], secondary: ['adductors'], week: 4, cue: "Long stride, back knee kisses the floor." },
+  { name: "Bulgarian split squat", level: 'intermediate', equipment: 'dumbbells', primary: ['quads', 'glutes'], secondary: ['adductors'], week: 0, cue: "Front foot far enough that the heel stays down." },
+  { name: "Leg extension", level: 'beginner', equipment: 'machine', primary: ['quads'], secondary: [], week: 0, cue: "Pause at the top, lower slowly." },
+  { name: "Romanian deadlift", level: 'intermediate', equipment: 'barbell', primary: ['hamstrings', 'glutes'], secondary: ['lower_back', 'forearms'], week: 0, cue: "Soft knees, push the hips back, bar close to the legs." },
+  { name: "Lying leg curl", level: 'beginner', equipment: 'machine', primary: ['hamstrings'], secondary: ['calves'], week: 6, cue: "Hips pressed down, slow lowering." },
+  { name: "Nordic curl", level: 'advanced', equipment: 'bodyweight', primary: ['hamstrings'], secondary: [], week: 0, cue: "Fall as slowly as you can." },
+  { name: "Copenhagen plank", level: 'intermediate', equipment: 'bench', primary: ['adductors'], secondary: ['obliques'], week: 2, cue: "Top leg on the bench, hips lifted." },
+  { name: "Adductor machine", level: 'beginner', equipment: 'machine', primary: ['adductors'], secondary: [], week: 0, cue: "Slow squeeze, controlled return." },
+  { name: "Sumo squat", level: 'beginner', equipment: 'dumbbells', primary: ['adductors', 'quads', 'glutes'], secondary: [], week: 0, cue: "Wide stance, toes out, knees track the toes." },
+  { name: "Standing calf raise", level: 'beginner', equipment: 'machine', primary: ['calves'], secondary: [], week: 4, cue: "Full stretch at the bottom, pause at the top." },
+  { name: "Seated calf raise", level: 'beginner', equipment: 'machine', primary: ['calves'], secondary: [], week: 0, cue: "Pause in the stretch." },
+  { name: "Jump rope", level: 'beginner', equipment: 'jump rope', primary: ['calves'], secondary: ['quads'], week: 0, cue: "Light, quick bounces on the balls of the feet." },
+]
+
+const muscleNotes: Partial<Record<MuscleGroup, MuscleDetail['note']>> = {
+  glutes: { kind: 'research', text: 'About 10–20 hard sets a week suits most lifters for growth. You hit 10 this week.', source_url: 'https://pubmed.ncbi.nlm.nih.gov/27433992/' },
+  lower_back: { kind: 'coach_tip', text: 'Keep RDLs light while your lower back settles. Back extensions with a pause are a good swap.' },
+  forearms: { kind: 'coach_tip', text: "Carries count. Two rounds of farmer's carry after your last session covers it." },
+  obliques: { kind: 'coach_tip', text: 'Add 2 sets of side plank on a rest day to tick these off.' },
+}
+
+let checkin: CheckinDraft = {
+  week_start: WEEK_START,
+  week: 6,
+  auto: { workouts_done: 3, workouts_planned: 4, meals_on_plan: 17, meals_planned: 20, steps_avg: 8450, avg_weight_kg: 71.8 },
+  weight_kg: 71.8,
+  waist_cm: null,
+  hips_cm: null,
+  energy: null,
+  sleep: null,
+  stress: null,
+  hunger: null,
+  photos: {},
+  wins: '',
+  struggles: '',
+  question: '',
+  status: 'due',
+}
+
+const coachNote: CoachNote = {
+  coach,
+  title: 'Week 5 feedback',
+  date: 'Sep 28',
+  body: "Great week, Aisha. Protein is consistently up. Let's add a 4th set on squats next week.",
+}
+
+const aishaWeights = [74.6, 74.0, 73.3, 72.8, 72.2, 71.8]
+
+// ---------- Coach: Simranvir's roster ----------
+type RosterBase = Omit<ClientRow, 'is_new' | 'setup_done' | 'has_targets' | 'goal' | 'weeks' | 'food_pct' | 'weight_change'> & {
+  goal: GoalType; weeks: number; food_pct: number; weight_change: number
+}
+interface Roster extends RosterBase { submitted_at?: string; submitted_label?: string; plan_pct?: number; flags?: string[]; has_question?: boolean; reviewed?: boolean; checked_in?: boolean; queue_change?: number }
+
+const trend = (end: number, drift: number, wobble = 0.15) =>
+  Array.from({ length: 6 }, (_, i) => +(end - drift * (5 - i) + (i % 2 ? wobble : -wobble) * (i < 5 ? 1 : 0)).toFixed(1))
+
+const roster: Roster[] = [
+  { client: aisha, goal: 'fat_loss', week: 6, weeks: 12, days_logged: 7, workouts_done: 3, workouts_planned: 4, food_pct: 85, weight_trend: aishaWeights, weight_change: -0.4, last_check_in: 'Today 6:40 PM', status: 'on_track', submitted_at: `${TODAY}T18:40:00`, submitted_label: 'Today 6:40 PM', plan_pct: 80, has_question: true, checked_in: true },
+  { client: person('c-marco', 'Marco Bianchi'), goal: 'muscle_gain', week: 3, weeks: 16, days_logged: 7, workouts_done: 4, workouts_planned: 4, food_pct: 92, weight_trend: trend(78.4, -0.1, 0.05), weight_change: 0.3, last_check_in: 'Today 9:40 AM', status: 'on_track', submitted_at: `${TODAY}T09:40:00`, submitted_label: 'Today 9:40 AM', plan_pct: 92, checked_in: true },
+  { client: person('c-priya', 'Priya Nair'), goal: 'fat_loss', week: 9, weeks: 12, days_logged: 4, workouts_done: 2, workouts_planned: 4, food_pct: 61, weight_trend: [66.1, 65.6, 65.5, 65.7, 65.9, 66.1], weight_change: 0.2, last_check_in: 'Sat 9:15 PM', status: 'slipping', submitted_at: '2026-10-03T21:15:00', submitted_label: 'Sat 9:15 PM', plan_pct: 61, flags: ['2 sessions missed', 'Sleep 2 of 5'], checked_in: true },
+  { client: person('c-daniel', 'Daniel Kim'), goal: 'performance', week: 5, weeks: 10, days_logged: 6, workouts_done: 3, workouts_planned: 3, food_pct: 88, weight_trend: [80.2, 80.0, 80.1, 79.9, 80.0, 79.9], weight_change: -0.1, last_check_in: 'Today 7:05 AM', status: 'on_track', submitted_at: `${TODAY}T07:05:00`, submitted_label: 'Today 7:05 AM', plan_pct: 88, checked_in: true },
+  { client: person('c-sofia', 'Sofia Alvarez'), goal: 'health', week: 2, weeks: 12, days_logged: 2, workouts_done: 1, workouts_planned: 3, food_pct: 54, weight_trend: [70.4, 70.3, 70.3, 70.2, 70.2, 70.2], weight_change: -0.2, last_check_in: 'Due today, 8 PM', status: 'awaiting' },
+  { client: person('c-harpreet', 'Harpreet Gill'), goal: 'muscle_gain', week: 11, weeks: 12, days_logged: 7, workouts_done: 4, workouts_planned: 4, food_pct: 90, weight_trend: [68.1, 68.3, 68.6, 68.8, 69.1, 69.5], weight_change: 0.4, last_check_in: 'Today 10:02 AM · reviewed', status: 'on_track', submitted_at: `${TODAY}T10:02:00`, submitted_label: 'Today 10:02 AM', plan_pct: 90, reviewed: true, checked_in: true },
+  { client: person('c-jordan', 'Jordan Lee'), goal: 'fat_loss', week: 4, weeks: 12, days_logged: 2, workouts_done: 2, workouts_planned: 4, food_pct: 66, weight_trend: [92.0, 91.2, 90.3, 89.5, 88.6, 87.7], weight_change: -0.9, last_check_in: 'Sep 20 · missed Sep 27', status: 'overdue' },
+  { client: person('c-mei', 'Mei Chen'), goal: 'health', week: 7, weeks: 12, days_logged: 6, workouts_done: 3, workouts_planned: 3, food_pct: 80, weight_trend: [58.6, 58.3, 58.5, 58.2, 58.3, 58.1], weight_change: -0.2, last_check_in: 'Today 8:55 AM', status: 'on_track', submitted_at: `${TODAY}T08:55:00`, submitted_label: 'Today 8:55 AM', plan_pct: 80, checked_in: true },
+  { client: person('c-noah', 'Noah Patel'), goal: 'fat_loss', week: 8, weeks: 12, days_logged: 7, workouts_done: 4, workouts_planned: 4, food_pct: 84, weight_trend: trend(84.2, 0.5), weight_change: -0.5, last_check_in: 'Today 11:20 AM', status: 'on_track', submitted_at: `${TODAY}T11:20:00`, submitted_label: 'Today 11:20 AM', plan_pct: 84, checked_in: true },
+  { client: person('c-grace', 'Grace Liu'), goal: 'fat_loss', week: 3, weeks: 12, days_logged: 7, workouts_done: 3, workouts_planned: 3, food_pct: 90, weight_trend: trend(63.4, 0.3), weight_change: -0.3, last_check_in: 'Today 12:05 PM', status: 'on_track', submitted_at: `${TODAY}T12:05:00`, submitted_label: 'Today 12:05 PM', plan_pct: 90, checked_in: true },
+  { client: person('c-liam', "Liam O'Connor"), goal: 'muscle_gain', week: 6, weeks: 16, days_logged: 7, workouts_done: 4, workouts_planned: 4, food_pct: 87, weight_trend: trend(76.1, -0.2), weight_change: 0.2, last_check_in: 'Today 8:10 AM · reviewed', status: 'on_track', submitted_at: `${TODAY}T08:10:00`, submitted_label: 'Today 8:10 AM', plan_pct: 87, reviewed: true, checked_in: true },
+  { client: person('c-ana', 'Ana Souza'), goal: 'performance', week: 9, weeks: 10, days_logged: 6, workouts_done: 4, workouts_planned: 4, food_pct: 83, weight_trend: trend(61.0, 0), weight_change: 0, last_check_in: 'Today 7:40 AM · reviewed', status: 'on_track', submitted_at: `${TODAY}T07:40:00`, submitted_label: 'Today 7:40 AM', plan_pct: 83, reviewed: true, checked_in: true },
+  { client: person('c-ethan', 'Ethan Brooks'), goal: 'fat_loss', week: 10, weeks: 12, days_logged: 7, workouts_done: 3, workouts_planned: 3, food_pct: 89, weight_trend: trend(88.0, 0.6), weight_change: -0.6, last_check_in: 'Sat 6:30 PM · reviewed', status: 'on_track', submitted_at: '2026-10-03T18:30:00', submitted_label: 'Sat 6:30 PM', plan_pct: 89, reviewed: true, checked_in: true },
+  { client: person('c-fatima', 'Fatima Zahra'), goal: 'health', week: 5, weeks: 12, days_logged: 6, workouts_done: 2, workouts_planned: 3, food_pct: 81, weight_trend: trend(64.5, 0.1), weight_change: -0.1, last_check_in: 'Sep 28 · checks in Mondays', status: 'on_track' },
+  { client: person('c-ravi', 'Ravi Menon'), goal: 'muscle_gain', week: 2, weeks: 16, days_logged: 5, workouts_done: 3, workouts_planned: 4, food_pct: 78, weight_trend: trend(70.2, -0.2), weight_change: 0.2, last_check_in: 'Sep 29 · checks in Tuesdays', status: 'on_track' },
+  { client: person('c-chloe', 'Chloe Martin'), goal: 'fat_loss', week: 7, weeks: 12, days_logged: 7, workouts_done: 3, workouts_planned: 4, food_pct: 86, weight_trend: trend(69.8, 0.4), weight_change: -0.4, last_check_in: 'Sep 30 · checks in Wednesdays', status: 'on_track' },
+  { client: person('c-lucas', 'Lucas Weber'), goal: 'performance', week: 4, weeks: 10, days_logged: 6, workouts_done: 4, workouts_planned: 4, food_pct: 85, weight_trend: trend(74.0, 0), weight_change: 0, last_check_in: 'Oct 1 · checks in Thursdays', status: 'on_track' },
+  { client: person('c-hana', 'Hana Sato'), goal: 'health', week: 1, weeks: 12, days_logged: 3, workouts_done: 1, workouts_planned: 2, food_pct: 70, weight_trend: [59.0, 59.0, 59.0, 59.0, 59.0, 58.9], weight_change: -0.1, last_check_in: 'First check-in today', status: 'awaiting' },
+]
+
+const ciId = (r: Roster) => `ci-${r.client.id.slice(2)}`
+const byCiId = (id: string) => roster.find((r) => ciId(r) === id)
+
+function queueItem(r: Roster): QueueItem {
+  return {
+    check_in_id: ciId(r),
+    client: r.client,
+    submitted_at: r.submitted_at!,
+    submitted_label: r.submitted_label!,
+    plan_pct: r.plan_pct ?? r.food_pct,
+    weight_change: r.weight_change,
+    flags: r.flags ?? [],
+    has_question: !!r.has_question,
+    status: r.reviewed ? 'reviewed' : 'submitted',
+  }
+}
+
+/** Flagged check-ins first (flags, then questions), then oldest first. */
+function reviewQueue(): QueueItem[] {
+  const rank = (q: QueueItem) => (q.flags.length ? 0 : q.has_question ? 1 : 2)
+  return roster
+    .filter((r) => r.checked_in && !r.reviewed)
+    .map(queueItem)
+    .sort((a, b) => rank(a) - rank(b) || a.submitted_at.localeCompare(b.submitted_at))
+}
+
+const reviewState = new Map<string, { draft: string; draft_saved_at: string | null; private_notes: string; targets: Targets; suggestion_applied: boolean }>()
+reviewState.set('ci-aisha', {
+  draft: "Huge week. 4 sets at 82.5 kg is a new best. Yes to hip thrusts for the next 2 weeks; I've swapped them into Full body C and kept a light RDL as a warm-up. On late work nights, aim for lights out by 11.",
+  draft_saved_at: `${TODAY}T18:52:00`,
+  private_notes: 'Oct 4: lower back tight after RDLs. Check form video next week.',
+  targets: { ...targets },
+  suggestion_applied: false,
+})
+
+function reviewFor(r: Roster) {
+  const id = ciId(r)
+  if (!reviewState.has(id)) {
+    reviewState.set(id, { draft: '', draft_saved_at: null, private_notes: '', targets: { ...targets, calories: 2300, protein_g: 150 }, suggestion_applied: false })
+  }
+  return reviewState.get(id)!
+}
+
+// ---------- Exported demo API ----------
+export const demo = {
+  clientHome(): ClientHome {
+    const food = demo.foodDay(TODAY)
+    const done = days.filter((d) => d.workout?.status === 'done').length
+    return {
+      today: TODAY,
+      // Demo data is Aisha's week, shown under the signed-in person's name.
+      me: { ...(signedIn() ?? aisha), body_model: bodyModel },
+      coach,
+      program: { week: 6, weeks: 12, start_date: '2026-08-24', has_program: true },
+      days,
+      week: { workouts_done: done, workouts_planned: 4, meals_on_plan: 17, meals_planned: 20, avg_protein_g: 128 },
+      check_in: { status: checkin.status, minutes: 4, next_date: null },
+      workout,
+      food,
+      habits: { ...habitsToday, weight_today: habitsToday.weight_today, steps_avg: 8450, water_ml_avg: 2100, sleep_avg: 6 + 50 / 60, note: 'Sleep dipped on Wednesday and Thursday.' },
+      weight: {
+        points: aishaWeights.map((kg, i) => ({ label: `W${i + 1}`, kg })),
+        current: 71.8, change: -2.8, goal: 68, start_date: '2026-08-24',
+      },
+      coach_note: coachNote,
+      bests: [
+        { exercise: 'Back squat', reps: 6, kg: 82.5, change: 7.5 },
+        { exercise: 'Romanian deadlift', reps: 8, kg: 70, change: 10 },
+        { exercise: 'Dumbbell bench press', reps: 10, kg: 18, change: 2 },
+      ],
+    }
+  },
+
+  trainWeek(): TrainWeek {
+    return { today: TODAY, week: 6, weeks: 12, body_model: bodyModel, sets, workout, has_program: true }
+  },
+
+  setBodyModel(m: BodyModel) {
+    bodyModel = m
+    return { body_model: m }
+  },
+
+  muscle(m: MuscleGroup): MuscleDetail {
+    const exercises = library
+      .filter((e) => e.primary.includes(m) || e.secondary.includes(m))
+      .map((e) => ({ name: e.name, role: e.primary.includes(m) ? ('primary' as const) : ('secondary' as const), sets_this_week: e.week, cue: e.cue, level: e.level, equipment: e.equipment }))
+      .sort((a, b) => (a.role === b.role ? b.sets_this_week - a.sets_this_week : a.role === 'primary' ? -1 : 1))
+    return { muscle: m, hard_sets: sets[m], exercises, note: muscleNotes[m] }
+  },
+
+  foodDay(date: string): FoodDay {
+    if (!foodDays.has(date)) {
+      foodDays.set(date, date > TODAY
+        ? { date, targets, meals: [], planned: ['breakfast', 'lunch', 'dinner'], day_rating: null }
+        : pastFoodDay(date))
+    }
+    return foodDays.get(date)!
+  },
+
+  rateDay(date: string, rating: OnPlan) {
+    demo.foodDay(date).day_rating = rating
+    return { ok: true }
+  },
+
+  logMeal(date: string, m: Omit<Meal, 'id'>) {
+    const day = demo.foodDay(date)
+    const saved = { ...m, id: crypto.randomUUID() }
+    day.meals.push(saved)
+    day.meals.sort((a, b) => a.eaten_at.localeCompare(b.eaten_at))
+    return saved
+  },
+
+  checkinDraft(): CheckinDraft {
+    return checkin
+  },
+
+  saveCheckin(patch: Partial<CheckinDraft>) {
+    checkin = { ...checkin, ...patch }
+    return checkin
+  },
+
+  submitCheckin() {
+    checkin = { ...checkin, status: 'submitted' }
+    return checkin
+  },
+
+  progress(): ClientProgress {
+    return {
+      start_date: '2026-08-24',
+      week: 6,
+      weeks: 12,
+      weight: { points: aishaWeights.map((kg, i) => ({ label: `W${i + 1}`, kg })), current: 71.8, change: -2.8, goal: 68 },
+      plan: [
+        { label: 'W1', pct: 85 }, { label: 'W2', pct: 77 }, { label: 'W3', pct: 91 },
+        { label: 'W4', pct: 78 }, { label: 'W5', pct: 94 }, { label: 'So far', pct: 80, partial: true },
+      ],
+      plan_target: 80,
+      waist: { cm: 78, change: -4 },
+      lift: { exercise: 'Back squat', reps: 6, kg: 82.5, change: 7.5 },
+      coach_note: coachNote,
+    }
+  },
+
+  // ----- coach -----
+  coachDashboard(): CoachDashboard {
+    const queue = reviewQueue()
+    const checkedIn = roster.filter((r) => r.checked_in).length
+    const reviewed = roster.filter((r) => r.reviewed).length
+    const attention = roster.filter((r) => r.status === 'slipping' || r.status === 'overdue' || r.client.id === 'c-sofia')
+    return {
+      today: TODAY,
+      coach,
+      invite_code: DEMO_ACCOUNTS.invite_code,
+      stats: {
+        active: roster.length, new_this_month: 2, checked_in: checkedIn, reviewed, waiting: queue.length,
+        plan_pct: 82, plan_change: 3, attention: attention.map((r) => r.client),
+      },
+      queue,
+      attention: [
+        { client: roster[2].client, status: 'slipping', text: 'Plan followed under 70% two weeks running. Sleep is down to about 5 hours.', action: 'Message Priya' },
+        { client: roster[6].client, status: 'overdue', text: "Missed last week's check-in. Weight is dropping 0.9 kg a week, faster than planned.", action: 'Message Jordan' },
+        { client: roster[4].client, status: 'awaiting', text: "Week 2. Logged 2 of 7 days and hasn't checked in yet (due 8 PM).", action: 'Send a reminder' },
+      ],
+      clients: roster.map(({ client, goal, week, weeks, days_logged, workouts_done, workouts_planned, food_pct, weight_trend, weight_change, last_check_in, status }) => ({
+        client, goal, week, weeks, days_logged, workouts_done, workouts_planned, food_pct, weight_trend, weight_change, last_check_in, status,
+        is_new: week === 1, setup_done: true, has_targets: true,
+      })),
+      total_clients: roster.length,
+    }
+  },
+
+  checkinLists(): CheckinLists {
+    return {
+      today: TODAY,
+      week_start: WEEK_START,
+      checked_in: roster.filter((r) => r.checked_in).length,
+      total: roster.length,
+      to_review: reviewQueue(),
+      not_in: roster.filter((r) => !r.checked_in).map((r) => ({
+        client: r.client,
+        due_label: r.status === 'overdue' ? 'Missed Sep 27' : r.last_check_in,
+        status: r.status,
+      })),
+      done: roster.filter((r) => r.reviewed).map(queueItem),
+    }
+  },
+
+  checkinReview(id: string): CheckinReview {
+    const r = byCiId(id)
+    if (!r) throw new Error('Check-in not found')
+    const st = reviewFor(r)
+    const queue = reviewQueue()
+    const idx = queue.findIndex((q) => q.check_in_id === id)
+    const isAisha = r.client.id === 'c-aisha'
+    const w = r.weight_trend
+    const perWeek = (w[w.length - 1] - w[0]) / (w.length - 1)
+    const remaining = r.weeks - r.week
+    const goal = isAisha ? 68 : +(w[w.length - 1] + perWeek * remaining).toFixed(1)
+
+    return {
+      check_in_id: id,
+      client: r.client,
+      goal: r.goal,
+      week: r.week,
+      weeks: r.weeks,
+      start_date: addDays(WEEK_START, -(r.week - 1) * 7),
+      check_in_weekday: 'Sundays',
+      status: r.status === 'slipping' ? 'slipping' : r.status === 'overdue' ? 'off_track' : 'on_track',
+      week_start: WEEK_START,
+      submitted_at: r.submitted_at ?? `${TODAY}T12:00:00`,
+      avg_weight_kg: w[w.length - 1],
+      weight_change: r.weight_change,
+      waist_cm: isAisha ? 78 : 84,
+      waist_change: isAisha ? -1 : -0.5,
+      workouts_done: isAisha ? 3 : r.workouts_done,
+      workouts_planned: r.workouts_planned,
+      skipped_note: isAisha ? 'Skipped Thu' : r.workouts_done < r.workouts_planned ? `${r.workouts_planned - r.workouts_done} missed` : null,
+      meals_pct: r.food_pct,
+      meals_on_plan: Math.round((r.food_pct / 100) * 20),
+      meals_planned: 20,
+      energy: isAisha ? 4 : r.status === 'slipping' ? 2 : 4,
+      sleep: isAisha ? 3 : r.status === 'slipping' ? 2 : 4,
+      stress: isAisha ? 2 : r.status === 'slipping' ? 4 : 2,
+      hunger: 3,
+      wins: isAisha ? 'All 4 squat sets at 82.5 kg. Prepped lunches for the whole week.' : 'Hit every planned session and kept protein up.',
+      struggles: isAisha
+        ? "Late work nights Wed and Thu, about 6 h sleep. Skipped Thursday's session."
+        : r.status === 'slipping' ? 'Work travel. Ate out most nights and slept badly.' : 'Nothing major. Weekend was a bit loose.',
+      question: isAisha ? 'Can I swap Romanian deadlifts for hip thrusts? Lower back felt tight.' : null,
+      weights: Array.from({ length: r.weeks }, (_, i) => ({ label: `W${i + 1}`, kg: i < w.length ? w[i] : null })),
+      goal_kg: goal,
+      projection_kg: isAisha ? 68.4 : goal,
+      plan_by_week: isAisha
+        ? [[100, 70], [75, 78], [100, 82], [75, 80], [100, 88], [75, 85]].map(([t, f], i) => ({ label: `W${i + 1}`, training: t, food: f }))
+        : w.map((_, i) => ({ label: `W${i + 1}`, training: i % 2 ? 75 : 100, food: Math.max(50, r.food_pct - 6 + i * 2) })),
+      photos: [
+        { pose: 'front', url: isAisha ? 'placeholder' : null },
+        { pose: 'side', url: isAisha ? 'placeholder' : null },
+        { pose: 'back', url: null },
+      ],
+      draft: st.draft,
+      draft_saved_at: st.draft_saved_at,
+      targets: st.targets,
+      suggestion: isAisha && !st.suggestion_applied
+        ? { title: 'Suggested from her question', text: 'Swap Romanian deadlift for hip thrust in Full body C, weeks 7 and 8.' }
+        : null,
+      private_notes: st.private_notes,
+      answers: [],
+      queue_position: idx >= 0 ? idx + 1 : 0,
+      queue_total: queue.length,
+      prev_id: idx > 0 ? queue[idx - 1].check_in_id : null,
+      next_id: idx >= 0 && idx < queue.length - 1 ? queue[idx + 1].check_in_id : null,
+    }
+  },
+
+  saveReviewDraft(id: string, patch: { draft?: string; private_notes?: string; targets?: Targets }) {
+    const r = byCiId(id)
+    if (!r) throw new Error('Check-in not found')
+    const st = reviewFor(r)
+    Object.assign(st, patch, patch.draft !== undefined ? { draft_saved_at: new Date().toISOString() } : {})
+    return { draft_saved_at: st.draft_saved_at }
+  },
+
+  sendReview(id: string, body: { message: string; mark_reviewed: boolean; targets: Targets | null }) {
+    const r = byCiId(id)
+    if (!r) throw new Error('Check-in not found')
+    const before = reviewQueue()
+    const idx = before.findIndex((q) => q.check_in_id === id)
+    const st = reviewFor(r)
+    if (body.targets) st.targets = body.targets
+    st.draft = ''
+    if (body.mark_reviewed) {
+      r.reviewed = true
+      r.last_check_in = `${r.submitted_label} · reviewed`
+    }
+    const after = reviewQueue()
+    const next = after[Math.min(Math.max(idx, 0), after.length - 1)]
+    return { next_id: next && next.check_in_id !== id ? next.check_in_id : null }
+  },
+
+  applySuggestion(id: string) {
+    const r = byCiId(id)
+    if (!r) throw new Error('Check-in not found')
+    reviewFor(r).suggestion_applied = true
+    return { ok: true }
+  },
+
+  logDaily(date: string, patch: DailyPatch) {
+    if (date === TODAY) {
+      if (patch.steps !== undefined) habitsToday.steps_today = patch.steps
+      if (patch.water_ml !== undefined) habitsToday.water_ml_today = patch.water_ml
+      if (patch.sleep_hours !== undefined) habitsToday.sleep_last_night = patch.sleep_hours
+      if (patch.weight_kg !== undefined) habitsToday.weight_today = patch.weight_kg
+    }
+    return { ok: true }
+  },
+
+  clientDetail(clientId: string): ClientDetail {
+    const r = roster.find((x) => x.client.id === clientId) ?? roster[0]
+    return {
+      client: r.client, email: `${r.client.first_name.toLowerCase()}@example.com`, setup_done: true, goal: r.goal,
+      start_date: addDays(WEEK_START, -(r.week - 1) * 7), week: r.week, date_of_birth: '1996-03-14', height_cm: 165,
+      start_weight_kg: r.weight_trend[0] ?? null, goal_weight_kg: r.client.id === aisha.id ? 68 : null, check_in_day: 0,
+      experience: 'intermediate', training_days: 4, train_location: 'gym', injuries: r.client.id === aisha.id ? 'Lower back gets tight after heavy deadlifts.' : null,
+      diet: 'none', foods_to_avoid: null, meals_per_day: 4,
+      targets: demoTargets[clientId] ?? { ...targets }, targets_from: '2026-08-24',
+    }
+  },
+
+  setTargets(clientId: string, t: Targets) {
+    demoTargets[clientId] = { ...t }
+    return { ok: true }
+  },
+}

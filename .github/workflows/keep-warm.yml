@@ -1,0 +1,24 @@
+name: Keep API warm
+
+# Render's free plan sleeps a service after 15 idle minutes; the first request
+# after that waits ~30-60 s. Pinging /health every 10 minutes avoids it.
+# GitHub may run scheduled jobs a few minutes late.
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: GET /health
+        env:
+          API_URL: ${{ vars.API_URL }}
+        run: |
+          test -n "$API_URL" || { echo "Set the API_URL repository variable"; exit 1; }
+          curl -fsS --max-time 90 --retry 2 --retry-delay 10 "$API_URL/health"

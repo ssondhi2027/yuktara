@@ -1,0 +1,504 @@
+"""End-to-end walkthrough against the local stack (no browser).
+
+Runs the launch-to-review flow with real sessions, exactly the calls the
+apps make: Supabase Auth (sign-up, Mailpit confirmation, password log-in),
+PostgREST as each user (RLS), and the FastAPI backend.
+
+Needs: `npx supabase start` + `npx supabase db reset`, and the API running
+on http://127.0.0.1:8000 with SUPABASE_SERVICE_ROLE_KEY set (for photos).
+
+    python scripts/walkthrough.py
+
+Test values only: every account is made up for this run.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import re
+import subprocess
+import sys
+import time
+import uuid
+from datetime import date, timedelta
+
+import asyncpg
+import httpx
+
+SUPABASE = "http://127.0.0.1:54321"
+MAILPIT = "http://127.0.0.1:54324"
+API = "http://127.0.0.1:8000"
+DB = "postgresql://postgres:postgres@127.0.0.1:54322/postgres"
+SITE = "http://localhost:5173/login"
+
+
+def anon_key() -> str:
+    # Local dev tool, fixed command, no user input.
+    out = subprocess.run("npx supabase status -o json", shell=True, capture_output=True, text=True, cwd="..")  # noqa: S602, S607
+    return json.loads(out.stdout[out.stdout.index("{") :])["ANON_KEY"]
+
+
+ANON = anon_key()
+TAG = uuid.uuid4().hex[:6]
+PASSWORD = f"Walkthrough-{uuid.uuid4().hex[:10]}"
+http = httpx.Client(timeout=20)
+step_no = 0
+
+
+def step(text: str) -> None:
+    global step_no
+    step_no += 1
+    print(f"\n[{step_no}] {text}")
+
+
+def ok(text: str) -> None:
+    print(f"    ok  {text}")
+
+
+def check(cond: bool, text: str) -> None:
+    if not cond:
+        print(f"    FAIL {text}")
+        sys.exit(1)
+    ok(text)
+
+
+def sql(query: str, *args):
+    async def run():
+        conn = await asyncpg.connect(DB)
+        try:
+            return await conn.fetch(query, *args)
+        finally:
+            await conn.close()
+
+    return asyncio.run(run())
+
+
+# ---------- Auth, as the app does it ----------
+
+
+def sign_up(email: str, name: str, invite: str | None = None) -> None:
+    r = http.post(
+        f"{SUPABASE}/auth/v1/signup",
+        params={"redirect_to": SITE},
+        headers={"apikey": ANON},
+        json={
+            "email": email,
+            "password": PASSWORD,
+            "data": {"full_name": name, "invite_code": invite, "timezone": "UTC"},
+        },
+    )
+    r.raise_for_status()
+    check(r.json().get("access_token") is None, f"{email}: no session until the email is confirmed")
+
+
+def log_in(email: str) -> httpx.Response:
+    return http.post(
+        f"{SUPABASE}/auth/v1/token",
+        params={"grant_type": "password"},
+        headers={"apikey": ANON},
+        json={"email": email, "password": PASSWORD},
+    )
+
+
+def confirm_via_mailpit(email: str) -> None:
+    for _ in range(30):
+        msgs = http.get(f"{MAILPIT}/api/v1/search", params={"query": f"to:{email}"}).json().get("messages", [])
+        if msgs:
+            break
+        time.sleep(0.5)
+    check(bool(msgs), f"{email}: confirmation email arrived in Mailpit")
+    body = http.get(f"{MAILPIT}/api/v1/message/{msgs[0]['ID']}").json()["Text"]
+    link = re.search(r"https?://\S+/auth/v1/verify\?\S+", body).group(0).rstrip(")")
+    r = http.get(link, follow_redirects=False)
+    location = r.headers.get("location", "")
+    check(
+        location.startswith(SITE) and "access_token=" in location,
+        "confirm link lands on /login with the session in the URL",
+    )
+
+
+def session(email: str) -> dict:
+    r = log_in(email)
+    r.raise_for_status()
+    s = r.json()
+    return {"token": s["access_token"], "id": s["user"]["id"]}
+
+
+class As:
+    """PostgREST and backend calls as one signed-in user."""
+
+    def __init__(self, s: dict):
+        self.id = s["id"]
+        self.h = {"apikey": ANON, "Authorization": f"Bearer {s['token']}"}
+
+    def get(self, table: str, **params) -> list:
+        r = http.get(f"{SUPABASE}/rest/v1/{table}", headers=self.h, params=params)
+        r.raise_for_status()
+        return r.json()
+
+    def write(self, method: str, table: str, body, prefer: str = "return=representation", **params) -> httpx.Response:
+        return http.request(
+            method, f"{SUPABASE}/rest/v1/{table}", headers={**self.h, "Prefer": prefer}, params=params, json=body
+        )
+
+    def rpc(self, fn: str, body: dict) -> httpx.Response:
+        return http.post(f"{SUPABASE}/rest/v1/rpc/{fn}", headers=self.h, json=body)
+
+    def api(self, method: str, path: str, body=None) -> httpx.Response:
+        return http.request(method, f"{API}{path}", headers={"Authorization": self.h["Authorization"]}, json=body)
+
+
+# ---------- Walkthrough ----------
+
+today = date.today()
+coach_email = f"coach-{TAG}@example.test"
+client_email = f"client-{TAG}@example.test"
+other_email = f"other-{TAG}@example.test"
+code = f"WALK-{TAG.upper()[:4]}"
+
+step("Coach signs up, confirms the email, and becomes the coach (docs/schema.md SQL)")
+sign_up(coach_email, "Walk Coach")
+check(log_in(coach_email).status_code == 400, "log in before confirming is refused (email not confirmed)")
+confirm_via_mailpit(coach_email)
+sql("update public.users set role = 'coach', invite_code = $2 where email = $1", coach_email, code)
+sql("delete from public.client_profiles where user_id = (select id from public.users where email = $1)", coach_email)
+coach = As(session(coach_email))
+check(coach.get("users", select="role", id=f"eq.{coach.id}")[0]["role"] == "coach", "role is coach in public.users")
+check(coach.get("client_profiles", select="user_id", coach_id=f"eq.{coach.id}") == [], "coach dashboard starts empty")
+
+step("Client signs up with the invite code, confirms, finishes setup")
+sign_up(client_email, "Walk Client", code)
+confirm_via_mailpit(client_email)
+client = As(session(client_email))
+r = client.write(
+    "PATCH",
+    "client_profiles",
+    {
+        "goal": "fat_loss",
+        "start_date": today.isoformat(),
+        "start_weight_kg": 74.6,
+        "goal_weight_kg": 68,
+        "check_in_day": 0,
+        "body_model": "female",
+        "experience": "intermediate",
+        "training_days": 4,
+        "train_location": "gym",
+        "diet": "none",
+        "meals_per_day": 3,
+        "cleared_to_exercise": True,
+        "setup_completed_at": f"{today.isoformat()}T12:00:00Z",
+    },
+    user_id=f"eq.{client.id}",
+    select="user_id",
+)  # the app names its columns: coach_notes is private
+check(r.status_code == 200 and len(r.json()) == 1, "setup answers saved to the client's own client_profiles row")
+p = client.get("client_profiles", select="coach_id,start_date", user_id=f"eq.{client.id}")[0]
+check(p["coach_id"] == coach.id, "invite code linked the client to the coach")
+check(p["start_date"] == today.isoformat(), "day 1 = today")
+check(client.get("nutrition_targets", select="id") == [], "no targets yet (app shows 'waiting for your coach')")
+check(client.get("check_ins", select="id") == [], "no check-in yet (first one waits for 3 days in the program)")
+
+step("Coach sees the new client straight away and sets first targets")
+rows = coach.get("client_profiles", select="user_id,goal,training_days,setup_completed_at", coach_id=f"eq.{coach.id}")
+check([x["user_id"] for x in rows] == [client.id], "new client listed from client_profiles")
+check(rows[0]["training_days"] == 4, "coach can read the setup answers")
+check(
+    any(s["client_id"] == client.id for s in coach.get("weekly_summaries", select="client_id")),
+    "weekly_summaries refreshed on Finish setup",
+)
+r = coach.write(
+    "POST",
+    "nutrition_targets",
+    {
+        "client_id": client.id,
+        "effective_from": today.isoformat(),
+        "calories": 2100,
+        "protein_g": 140,
+        "carbs_g": 210,
+        "fat_g": 70,
+        "water_ml": 2500,
+        "steps": 9000,
+        "sleep_hours": 7.5,
+        "set_by": coach.id,
+    },
+    prefer="resolution=merge-duplicates,return=representation",
+    on_conflict="client_id,effective_from",
+)
+check(r.status_code in (200, 201), "coach saved targets")
+check(client.get("nutrition_targets", select="calories")[0]["calories"] == 2100, "client sees 2100 kcal")
+r = client.write(
+    "POST",
+    "nutrition_targets",
+    {
+        "client_id": client.id,
+        "effective_from": today.isoformat(),
+        "calories": 4000,
+        "protein_g": 1,
+        "carbs_g": 1,
+        "fat_g": 1,
+        "set_by": client.id,
+    },
+    prefer="resolution=merge-duplicates",
+    on_conflict="client_id,effective_from",
+)
+check(r.status_code in (401, 403), "client can't write their own targets")
+
+step("Client logs a meal, steps, water, sleep and weight; coach sees them")
+r = client.write(
+    "POST",
+    "meal_logs",
+    {
+        "client_id": client.id,
+        "meal_type": "lunch",
+        "title": "Chicken rice bowl",
+        "calories": 610,
+        "protein_g": 48,
+        "carbs_g": 72,
+        "fat_g": 14,
+        "on_plan": "yes",
+    },
+)
+check(r.status_code == 201, "meal logged")
+r = client.write(
+    "POST",
+    "daily_logs",
+    {
+        "client_id": client.id,
+        "log_date": today.isoformat(),
+        "steps": 6420,
+        "water_ml": 1500,
+        "sleep_hours": 7.2,
+        "weight_kg": 74.1,
+        "day_rating": "yes",
+    },
+    prefer="resolution=merge-duplicates,return=representation",
+    on_conflict="client_id,log_date",
+)
+check(r.status_code in (200, 201), "steps, water, sleep, weight and day rating logged")
+check(len(coach.get("meal_logs", select="title", client_id=f"eq.{client.id}")) == 1, "coach sees the meal")
+d = coach.get("daily_logs", select="steps,weight_kg", client_id=f"eq.{client.id}")[0]
+check(d["steps"] == 6420 and float(d["weight_kg"]) == 74.1, "coach sees steps and weight")
+
+step("Check-in opens on the check-in day, client submits it with a photo")
+# Pretend the client started 10 days ago and today is their check-in day, then run the hourly job.
+dow = (today.isoweekday()) % 7
+sql(
+    "update public.client_profiles set start_date = current_date - 10, check_in_day = $2 where user_id = $1",
+    uuid.UUID(client.id),
+    dow,
+)
+sql("select public.roll_check_ins()")
+open_ci = client.get("check_ins", select="id,week_start,status", status="eq.due")
+check(len(open_ci) == 1, f"check-in opened for the week of {open_ci[0]['week_start'] if open_ci else '?'}")
+ci = open_ci[0]["id"]
+up = client.api("POST", "/photos/upload-url", {"kind": "progress", "content_type": "image/jpeg", "size_bytes": 200})
+check(up.status_code == 200, "backend signed a photo upload link")
+put = http.put(up.json()["signed_url"], content=b"\xff\xd8\xff\xe0walkthrough", headers={"content-type": "image/jpeg"})
+check(put.status_code == 200, "photo uploaded to the client's own folder")
+r = client.api(
+    "POST",
+    f"/checkins/{ci}/submit",
+    {
+        "avg_weight_kg": 74.1,
+        "waist_cm": 80,
+        "energy": 4,
+        "sleep": 3,
+        "stress": 2,
+        "hunger": 3,
+        "wins": "Logged every meal",
+        "struggles": "Late nights",
+        "question": "Can I swap RDLs for hip thrusts?",
+        "photos": [{"pose": "front", "path": up.json()["path"]}],
+    },
+)
+check(r.status_code == 200 and r.json()["status"] == "submitted", "check-in submitted")
+
+step("It appears in the coach's review queue; coach reviews with a message and new targets")
+queue = coach.get("check_ins", select="id,client_id", status="eq.submitted")
+check(any(q["id"] == ci for q in queue), "in the review queue")
+photos = coach.get("progress_photos", select="photo_url", check_in_id=f"eq.{ci}")
+signed = http.post(
+    f"{SUPABASE}/storage/v1/object/sign/progress-photos/{photos[0]['photo_url']}",
+    headers=coach.h,
+    json={"expiresIn": 3600},
+)
+check(signed.status_code == 200, "coach can open the client's photo (signed URL)")
+r = coach.api(
+    "POST",
+    f"/checkins/{ci}/review",
+    {
+        "message": "Great first week. Yes to hip thrusts.",
+        "mark_reviewed": True,
+        "targets": {
+            "calories": 2000,
+            "protein_g": 145,
+            "carbs_g": 190,
+            "fat_g": 65,
+            "water_ml": 2500,
+            "steps": 10000,
+            "sleep_h": 7.5,
+        },
+    },
+)
+check(r.status_code == 200, "review sent")
+check(client.get("check_ins", select="status", id=f"eq.{ci}")[0]["status"] == "reviewed", "check-in marked reviewed")
+msg = client.get("messages", select="body,sender_id", client_id=f"eq.{client.id}")
+check(
+    any(m["body"].startswith("Great first week") and m["sender_id"] == coach.id for m in msg),
+    "client sees the feedback",
+)
+next_monday = today + timedelta(days=7 - today.weekday())
+targets = client.get("nutrition_targets", select="effective_from,calories", order="effective_from")
+check(
+    targets[-1] == {"effective_from": next_monday.isoformat(), "calories": 2000},
+    f"new targets start Monday {next_monday}",
+)
+
+step("A second client (no invite code) can't see the first client; clients can't use coach endpoints")
+sign_up(other_email, "Other Client")
+confirm_via_mailpit(other_email)
+other = As(session(other_email))
+check(other.get("client_profiles", select="user_id,coach_id")[0]["coach_id"] is None, "no coach linked without a code")
+for table in ("client_profiles", "meal_logs", "daily_logs", "check_ins", "messages", "nutrition_targets"):
+    rows = other.get(
+        table,
+        select="client_id" if table != "client_profiles" else "user_id",
+        **({"client_id": f"eq.{client.id}"} if table != "client_profiles" else {"user_id": f"eq.{client.id}"}),
+    )
+    check(rows == [], f"other client sees none of the first client's {table}")
+check(other.api("GET", "/coach/invite-code").status_code == 403, "client is refused coach endpoints (403)")
+r = other.write("PATCH", "users", {"role": "coach"}, id=f"eq.{other.id}")
+check(r.status_code >= 400, "client can't make themselves a coach")
+check(
+    coach.get("client_profiles", select="user_id", user_id=f"eq.{other.id}") == [],
+    "the coach doesn't see the other client",
+)
+
+print("\nWalkthrough passed.")
+
+step("The apps' own queries (same select strings as frontend/src/lib/live) all run under RLS")
+PROFILE_COLS = (
+    "user_id, status, goal, start_date, start_weight_kg, goal_weight_kg, check_in_day, setup_completed_at,"
+    " date_of_birth, height_cm, experience, training_days, train_location, injuries, diet, foods_to_avoid,"
+    " meals_per_day"
+).replace(" ", "")
+monday = (today - timedelta(days=today.weekday())).isoformat()
+client_queries = [
+    (
+        "programs",
+        {
+            "select": "id,name,start_date,weeks,workout_templates(id,name,day_of_week,position,"
+            "template_exercises(id,position,target_sets,target_reps,exercise_id,exercises(name)))",
+            "client_id": f"eq.{client.id}",
+            "start_date": f"lte.{today}",
+        },
+    ),
+    (
+        "exercise_swaps",
+        {
+            "select": "template_exercise_id,from_week,to_week,"
+            "to_exercise:exercises!exercise_swaps_to_exercise_id_fkey(name)"
+        },
+    ),
+    (
+        "set_logs",
+        {
+            "select": "weight_kg,reps,exercise_id,exercises(name),workout_sessions!inner(performed_on,client_id)",
+            "workout_sessions.client_id": f"eq.{client.id}",
+            "is_warmup": "eq.false",
+            "weight_kg": "not.is.null",
+        },
+    ),
+    (
+        "workout_sessions",
+        {"select": "id,performed_on,status,workout_template_id,set_logs(id,is_warmup)", "client_id": f"eq.{client.id}"},
+    ),
+    (
+        "exercise_muscles",
+        {
+            "select": "role,note_kind,note,source_url,exercises!inner(id,name,level,equipment,cue)",
+            "muscle": "eq.glutes",
+        },
+    ),
+    (
+        "set_logs",
+        {
+            "select": "exercise_id,workout_sessions!inner(performed_on,client_id,status)",
+            "workout_sessions.client_id": f"eq.{client.id}",
+            "workout_sessions.performed_on": f"gte.{monday}",
+        },
+    ),
+    ("checkin_questions", {"select": "id,prompt,answer_type", "is_active": "eq.true", "order": "position"}),
+    ("checkin_answers", {"select": "question_id,value_number,value_text", "check_in_id": f"eq.{ci}"}),
+    ("progress_photos", {"select": "pose,photo_url", "check_in_id": f"eq.{ci}"}),
+    ("weekly_summaries", {"select": "week_start,training_pct,nutrition_pct", "client_id": f"eq.{client.id}"}),
+    (
+        "client_profiles",
+        {
+            "select": "coach_id,start_date,start_weight_kg,goal_weight_kg,check_in_day,body_model,meals_per_day",
+            "user_id": f"eq.{client.id}",
+        },
+    ),
+    (
+        "messages",
+        {
+            "select": "body,created_at,check_in_id",
+            "client_id": f"eq.{client.id}",
+            "order": "created_at.desc",
+            "limit": "1",
+        },
+    ),
+]
+for table, params in client_queries:
+    r = http.get(f"{SUPABASE}/rest/v1/{table}", headers=client.h, params=params)
+    check(r.status_code == 200, f"client query on {table} ({len(r.json()) if r.status_code == 200 else r.text[:80]})")
+lib = client.get("exercise_muscles", select="role,exercises!inner(name)", muscle="eq.glutes")
+check(len(lib) >= 5, f"exercise library visible for the body map ({len(lib)} glute exercises)")
+r = client.rpc("muscle_sets_for_week", {"client": client.id, "week_start": monday})
+check(r.status_code == 200, "body-map function runs for the client")
+
+coach_queries = [
+    ("client_profiles", {"select": PROFILE_COLS, "coach_id": f"eq.{coach.id}"}),
+    (
+        "programs",
+        {"select": "client_id,weeks,start_date,workout_templates(id,day_of_week)", "client_id": f"in.({client.id})"},
+    ),
+    (
+        "check_ins",
+        {
+            "select": "id,client_id,week_start,status,submitted_at,reviewed_at,sleep,question,avg_weight_kg",
+            "client_id": f"in.({client.id})",
+            "order": "week_start.desc",
+        },
+    ),
+    (
+        "checkin_answers",
+        {"select": "value_number,value_text,checkin_questions(prompt,answer_type)", "check_in_id": f"eq.{ci}"},
+    ),
+    ("review_drafts", {"select": "body,updated_at", "check_in_id": f"eq.{ci}"}),
+    ("users", {"select": "id,full_name,invite_code", "id": f"eq.{coach.id}"}),
+]
+for table, params in coach_queries:
+    r = http.get(f"{SUPABASE}/rest/v1/{table}", headers=coach.h, params=params)
+    check(r.status_code == 200, f"coach query on {table}")
+check(
+    coach.get("users", select="invite_code", id=f"eq.{coach.id}")[0]["invite_code"] == code,
+    "coach reads their invite code",
+)
+r = coach.write(
+    "POST",
+    "review_drafts",
+    {"check_in_id": ci, "coach_id": coach.id, "body": "draft"},
+    prefer="resolution=merge-duplicates",
+    on_conflict="check_in_id",
+)
+check(r.status_code in (200, 201), "coach saves a review draft")
+check(
+    coach.rpc("set_coach_notes", {"client": client.id, "notes": "private"}).status_code in (200, 204),
+    "coach saves private notes",
+)
+check(coach.rpc("get_coach_notes", {"client": client.id}).json() == "private", "coach reads private notes")
+check(client.rpc("get_coach_notes", {"client": client.id}).json() is None, "client can't read the coach's notes")
+
+print("\nApp queries passed.")

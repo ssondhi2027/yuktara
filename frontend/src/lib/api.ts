@@ -1,0 +1,352 @@
+// Data access for the screens. Each function returns a view model shaped for
+// one screen, from one of two sources that never mix:
+//
+//   Demo mode (no Supabase keys): lib/demo.ts, an in-memory copy of the
+//   wireframe data, so every screen is clickable without a backend.
+//   Supabase mode: lib/live/*, queries run as the signed-in user (RLS), plus
+//   the FastAPI backend (lib/backend.ts) for writes that change several tables.
+//
+// Fields are nullable where a brand-new account has no data yet; screens show
+// an empty state for those, never a made-up number.
+
+import type {
+  AnswerType, BodyModel, CheckinStatus, DietType, ExerciseLevel, GoalType, MealType, MuscleGroup, OnPlan,
+  PhotoPose, SessionStatus, TrainLocation, WeekStatus,
+} from '@/types/db'
+import { backend } from './backend'
+import { demo } from './demo'
+import { liveClient } from './live/client'
+import { liveCoach } from './live/coach'
+import { isDemo } from './supabase'
+
+export { ApiError } from './backend'
+
+// ---------- Shared ----------
+export interface Person { id: string; full_name: string; first_name: string; initials: string }
+export interface WeekPoint { label: string; kg: number | null }
+export interface CoachNote { coach: Person; title: string; date: string; body: string }
+export interface Targets { calories: number; protein_g: number; carbs_g: number; fat_g: number; water_ml: number; steps: number; sleep_h: number }
+
+// ---------- Client ----------
+export interface DaySummary {
+  date: string
+  is_today: boolean
+  logged: boolean
+  workout: { name: string; status: SessionStatus | 'planned' } | null
+  meals_on_plan: number
+  meals_planned: number
+  steps: number | null
+}
+
+export interface ExerciseLine { name: string; sets: number; reps: string; weight_kg?: number; note?: string }
+
+export interface TodayWorkout {
+  name: string
+  duration_min: number | null
+  exercises: ExerciseLine[]
+  sets_done: number
+  sets_total: number
+}
+
+export interface Meal {
+  id: string
+  meal_type: MealType
+  eaten_at: string
+  title: string
+  calories: number
+  protein_g: number
+  carbs_g: number
+  fat_g: number
+  on_plan: OnPlan
+  photo_url: string | null
+}
+
+export interface FoodDay {
+  date: string
+  /** null until the coach sets targets */
+  targets: Targets | null
+  meals: Meal[]
+  planned: MealType[]
+  day_rating: OnPlan | null
+}
+
+export interface Habits {
+  steps_today: number | null
+  water_ml_today: number | null
+  sleep_last_night: number | null
+  weight_today: number | null
+  steps_avg: number | null
+  water_ml_avg: number | null
+  sleep_avg: number | null
+  note: string | null
+}
+
+/** One day's habit log. Undefined fields are left as they are. */
+export interface DailyPatch { steps?: number | null; water_ml?: number | null; sleep_hours?: number | null; weight_kg?: number | null }
+
+export interface ClientHome {
+  today: string
+  me: Person & { body_model: BodyModel }
+  /** null until a coach is linked */
+  coach: Person | null
+  /** week 1 is the week containing start_date; weeks is null without a program */
+  program: { week: number; weeks: number | null; start_date: string; has_program: boolean }
+  days: DaySummary[]
+  week: { workouts_done: number; workouts_planned: number; meals_on_plan: number; meals_planned: number; avg_protein_g: number | null }
+  /** 'none' = no check-in open yet; next_date says when the next one opens */
+  check_in: { status: CheckinStatus | 'none'; minutes: number; next_date: string | null }
+  workout: TodayWorkout | null
+  food: FoodDay
+  habits: Habits
+  weight: { points: WeekPoint[]; current: number | null; change: number | null; goal: number | null; start_date: string }
+  coach_note: CoachNote | null
+  bests: { exercise: string; reps: number; kg: number; change: number }[]
+}
+
+export interface MuscleExercise {
+  name: string
+  role: 'primary' | 'secondary'
+  sets_this_week: number
+  cue?: string
+  level: ExerciseLevel
+  equipment: string
+}
+export interface MuscleDetail {
+  muscle: MuscleGroup
+  hard_sets: number
+  exercises: MuscleExercise[]
+  note?: { kind: 'research' | 'coach_tip'; text: string; source_url?: string }
+}
+
+export interface TrainWeek {
+  today: string
+  week: number
+  weeks: number | null
+  body_model: BodyModel
+  sets: Record<MuscleGroup, number>
+  workout: TodayWorkout | null
+  has_program: boolean
+}
+
+export interface CheckinQuestion { id: string; prompt: string; answer_type: AnswerType }
+export interface CheckinAnswerValue { value_number?: number | null; value_text?: string | null }
+
+export interface CheckinDraft {
+  /** check_ins.id; set when the draft comes from Supabase. */
+  id?: string
+  week_start: string
+  week: number
+  auto: { workouts_done: number; workouts_planned: number; meals_on_plan: number; meals_planned: number; steps_avg: number | null; avg_weight_kg: number | null }
+  weight_kg: number | null
+  waist_cm: number | null
+  hips_cm: number | null
+  energy: number | null
+  sleep: number | null
+  stress: number | null
+  hunger: number | null
+  /** storage paths (saved) or blob: URLs (picked, not uploaded yet) */
+  photos: Partial<Record<PhotoPose, string>>
+  /** what to show for each photo (signed URLs or blob: URLs) */
+  photo_previews?: Partial<Record<PhotoPose, string>>
+  wins: string
+  struggles: string
+  question: string
+  /** the coach's own questions */
+  questions?: CheckinQuestion[]
+  answers?: Record<string, CheckinAnswerValue>
+  status: CheckinStatus
+}
+
+export interface ClientProgress {
+  start_date: string
+  week: number
+  weeks: number | null
+  weight: { points: WeekPoint[]; current: number | null; change: number | null; goal: number | null }
+  plan: { label: string; pct: number | null; partial?: boolean }[]
+  plan_target: number
+  waist: { cm: number; change: number } | null
+  lift: { exercise: string; reps: number; kg: number; change: number } | null
+  coach_note: CoachNote | null
+}
+
+// ---------- Coach ----------
+export type ClientWeekStatus = 'on_track' | 'slipping' | 'overdue' | 'awaiting'
+
+export interface ClientRow {
+  client: Person
+  goal: GoalType | null
+  week: number
+  weeks: number | null
+  days_logged: number
+  workouts_done: number
+  workouts_planned: number
+  food_pct: number | null
+  weight_trend: number[]
+  weight_change: number | null
+  last_check_in: string
+  status: ClientWeekStatus
+  /** in their first program week */
+  is_new: boolean
+  setup_done: boolean
+  has_targets: boolean
+}
+
+export interface QueueItem {
+  check_in_id: string
+  client: Person
+  submitted_at: string
+  submitted_label: string
+  plan_pct: number | null
+  weight_change: number | null
+  flags: string[]
+  has_question: boolean
+  status: CheckinStatus
+}
+
+export interface AttentionItem { client: Person; status: ClientWeekStatus; text: string; action: string }
+
+export interface CoachDashboard {
+  today: string
+  coach: Person
+  invite_code: string | null
+  stats: {
+    active: number; new_this_month: number; checked_in: number; reviewed: number; waiting: number
+    plan_pct: number | null; plan_change: number | null; attention: Person[]
+  }
+  queue: QueueItem[]
+  attention: AttentionItem[]
+  clients: ClientRow[]
+  total_clients: number
+}
+
+export interface CheckinReview {
+  check_in_id: string
+  client: Person
+  goal: GoalType | null
+  week: number
+  weeks: number | null
+  start_date: string
+  check_in_weekday: string
+  status: WeekStatus | null
+  week_start: string
+  submitted_at: string
+  avg_weight_kg: number | null
+  weight_change: number | null
+  waist_cm: number | null
+  waist_change: number | null
+  workouts_done: number
+  workouts_planned: number
+  skipped_note: string | null
+  meals_pct: number | null
+  meals_on_plan: number
+  meals_planned: number
+  energy: number | null
+  sleep: number | null
+  stress: number | null
+  hunger: number | null
+  wins: string
+  struggles: string
+  question: string | null
+  answers: { prompt: string; value: string }[]
+  weights: WeekPoint[]
+  goal_kg: number | null
+  projection_kg: number | null
+  plan_by_week: { label: string; training: number; food: number }[]
+  photos: { pose: PhotoPose; url: string | null }[]
+  draft: string
+  draft_saved_at: string | null
+  /** targets in force now; null if the coach hasn't set any */
+  targets: Targets | null
+  suggestion: {
+    title: string
+    text: string
+    /** What POST /programs/swap needs; present when the swap can be applied in one click. */
+    swap?: SwapRequest
+  } | null
+  private_notes: string
+  queue_position: number
+  queue_total: number
+  prev_id: string | null
+  next_id: string | null
+}
+
+export interface CheckinLists {
+  today: string
+  week_start: string
+  checked_in: number
+  total: number
+  to_review: QueueItem[]
+  not_in: { client: Person; due_label: string; status: ClientWeekStatus }[]
+  done: QueueItem[]
+}
+
+/** A client's setup answers and current targets, for the coach. */
+export interface ClientDetail {
+  client: Person
+  email: string
+  setup_done: boolean
+  goal: GoalType | null
+  start_date: string
+  week: number
+  date_of_birth: string | null
+  height_cm: number | null
+  start_weight_kg: number | null
+  goal_weight_kg: number | null
+  check_in_day: number
+  experience: ExerciseLevel | null
+  training_days: number | null
+  train_location: TrainLocation | null
+  injuries: string | null
+  diet: DietType | null
+  foods_to_avoid: string | null
+  meals_per_day: number | null
+  targets: Targets | null
+  targets_from: string | null
+}
+
+export interface SwapRequest { template_exercise_id: string; to_exercise_id: string; from_week: number; to_week: number }
+
+// ---------- API ----------
+const wait = <T,>(v: T) => new Promise<T>((r) => setTimeout(() => r(structuredClone(v)), 120))
+
+export const api = {
+  // client
+  clientHome: (): Promise<ClientHome> => (isDemo ? wait(demo.clientHome()) : liveClient.home()),
+  trainWeek: (): Promise<TrainWeek> => (isDemo ? wait(demo.trainWeek()) : liveClient.trainWeek()),
+  muscle: (m: MuscleGroup): Promise<MuscleDetail> => (isDemo ? wait(demo.muscle(m)) : liveClient.muscle(m)),
+  foodDay: (date: string): Promise<FoodDay> => (isDemo ? wait(demo.foodDay(date)) : liveClient.foodDay(date)),
+  rateDay: (date: string, rating: OnPlan) => (isDemo ? wait(demo.rateDay(date, rating)) : liveClient.rateDay(date, rating)),
+  logMeal: (date: string, meal: Omit<Meal, 'id'>) => (isDemo ? wait(demo.logMeal(date, meal)) : liveClient.logMeal(date, meal)),
+  logDaily: (date: string, patch: DailyPatch) => (isDemo ? wait(demo.logDaily(date, patch)) : liveClient.logDaily(date, patch)),
+  /** null when no check-in is open (ClientHome.check_in.next_date says when it opens) */
+  checkinDraft: (): Promise<CheckinDraft | null> => (isDemo ? wait(demo.checkinDraft()) : liveClient.checkinDraft()),
+  saveCheckin: (patch: Partial<CheckinDraft>) => (isDemo ? wait(demo.saveCheckin(patch)) : liveClient.saveCheckin(patch)),
+  /** Demo: marks the in-memory draft sent. Live: POST /checkins/{id}/submit (uploads photos first). */
+  submitCheckin: (draft: CheckinDraft): Promise<CheckinDraft> => (isDemo ? wait(demo.submitCheckin()) : liveClient.submitCheckin(draft)),
+  progress: (): Promise<ClientProgress> => (isDemo ? wait(demo.progress()) : liveClient.progress()),
+  setBodyModel: (m: BodyModel) => (isDemo ? wait(demo.setBodyModel(m)) : liveClient.setBodyModel(m)),
+
+  // coach
+  coachDashboard: (): Promise<CoachDashboard> => (isDemo ? wait(demo.coachDashboard()) : liveCoach.dashboard()),
+  checkinLists: (): Promise<CheckinLists> => (isDemo ? wait(demo.checkinLists()) : liveCoach.checkinLists()),
+  checkinReview: (id: string): Promise<CheckinReview> => (isDemo ? wait(demo.checkinReview(id)) : liveCoach.checkinReview(id)),
+  saveReviewDraft: (id: string, patch: { draft?: string; private_notes?: string }) =>
+    isDemo ? wait(demo.saveReviewDraft(id, patch)) : liveCoach.saveReviewDraft(id, patch),
+  sendReview: (id: string, body: { message: string; mark_reviewed: boolean; targets: Targets | null }) =>
+    isDemo ? wait(demo.sendReview(id, body)) : backend<{ next_id: string | null }>(`/checkins/${id}/review`, body),
+  applySuggestion: (id: string, swap?: SwapRequest) => (isDemo ? wait(demo.applySuggestion(id)) : liveCoach.applySuggestion(id, swap)),
+  clientDetail: (clientId: string): Promise<ClientDetail> => (isDemo ? wait(demo.clientDetail(clientId)) : liveCoach.clientDetail(clientId)),
+  /** The coach sets targets that apply from today. */
+  setTargets: (clientId: string, targets: Targets) => (isDemo ? wait(demo.setTargets(clientId, targets)) : liveCoach.setTargets(clientId, targets)),
+}
+
+export type Api = typeof api
+
+/**
+ * Coach screens refetch every 30 s and when the window regains focus, so a
+ * client's new logs show up without a reload. Chosen over Supabase Realtime:
+ * the coach views combine several tables (a change would trigger a refetch
+ * anyway), polling needs no publication or extra RLS setup, and 30 s is plenty
+ * for coaching. Client screens refresh from their own writes instead.
+ */
+export const COACH_REFRESH = { refetchInterval: 30_000, refetchOnWindowFocus: true } as const
