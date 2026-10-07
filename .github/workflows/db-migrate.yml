@@ -2,7 +2,7 @@ name: Deploy
 
 # On every push to main, in this order:
 #   1. database migrations (needs a manual approval in the "production" environment)
-#   2. Render (API) via its deploy hook
+#   2. Render (API) via the Render API
 #   3. Netlify (site) via its build hook
 # Render and Netlify auto-deploys must be off, or they race the migration (docs/api.md).
 
@@ -45,24 +45,30 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     env:
-      RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
       RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
       RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
     steps:
       - name: Trigger deploy
         run: |
-          test -n "$RENDER_DEPLOY_HOOK_URL" || { echo "RENDER_DEPLOY_HOOK_URL not set"; exit 1; }
-          curl -fsS -X POST "$RENDER_DEPLOY_HOOK_URL" > /dev/null
+          test -n "$RENDER_API_KEY" || { echo "RENDER_API_KEY not set"; exit 1; }
+          test -n "$RENDER_SERVICE_ID" || { echo "RENDER_SERVICE_ID not set"; exit 1; }
+          deploy_id=$(curl -fsS -X POST \
+            -H "Authorization: Bearer $RENDER_API_KEY" \
+            -H "Accept: application/json" -H "Content-Type: application/json" \
+            -d '{"clearCache":"do_not_clear"}' \
+            "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys" | jq -r '.id')
+          if [ -z "$deploy_id" ] || [ "$deploy_id" = "null" ]; then echo "could not start Render deploy"; exit 1; fi
+          echo "Started Render deploy $deploy_id"
+          echo "DEPLOY_ID=$deploy_id" >> "$GITHUB_ENV"
       - name: Wait until the new version is live
-        if: env.RENDER_API_KEY != '' && env.RENDER_SERVICE_ID != ''
         run: |
           for i in $(seq 1 60); do
             status=$(curl -fsS -H "Authorization: Bearer $RENDER_API_KEY" \
-              "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys?limit=1" | jq -r '.[0].deploy.status')
+              "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys/$DEPLOY_ID" | jq -r '.status')
             echo "deploy status: $status"
             case "$status" in
               live) exit 0 ;;
-              build_failed|update_failed|canceled|deactivated) exit 1 ;;
+              build_failed|update_failed|pre_deploy_failed|canceled|deactivated) exit 1 ;;
             esac
             sleep 15
           done
