@@ -5,6 +5,7 @@ import { monthDay } from '@/lib/dates'
 import { DIET_LABEL, EXPERIENCE_LABEL, GOAL_LABEL, LOCATION_LABEL, MEALS_LABEL, WEEKDAY_LABEL } from '@/lib/labels'
 import { Sheet } from '@/components/ui/Sheet'
 import { EMPTY_TARGETS, TargetsForm, targetsProblem } from './TargetsForm'
+import { ClientWorkouts } from './ClientWorkouts'
 
 /** A client's setup answers, plus the coach's targets for them (nutrition_targets, from today). */
 export function ClientSheet({ clientId, onClose }: { clientId: string; onClose: () => void }) {
@@ -74,6 +75,8 @@ export function ClientSheet({ clientId, onClose }: { clientId: string; onClose: 
         {saved && <div role="status" className="auth-note ok">Targets saved. {c.client.first_name} sees them now.</div>}
         <button className="btn btn-primary btn-lg btn-block" disabled={save.isPending}>{save.isPending ? 'Saving…' : 'Save targets'}</button>
       </form>
+
+      <ClientWorkouts clientId={clientId} firstName={c.client.first_name} />
     </Sheet>
   )
 }

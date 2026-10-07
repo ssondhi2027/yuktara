@@ -1,27 +1,32 @@
 // Live data for the client app: every query runs as the signed-in client, so
 // RLS limits it to their own rows (and their coach's public details).
 
-import { MUSCLE_GROUPS, type BodyModel, type MealType, type MuscleGroup, type OnPlan, type PhotoPose } from '@/types/db'
+import { MUSCLE_GROUPS, type BodyModel, type MealType, type MuscleGroup, type OnPlan, type PhotoPose, type UnitSystem } from '@/types/db'
 import type {
-  CheckinDraft, ClientHome, ClientProgress, DailyPatch, DaySummary, FoodDay, Meal, MuscleDetail, MuscleExercise,
-  Person, TodayWorkout, TrainWeek, WeekPoint,
+  CheckinDraft, ClientHome, ClientProgress, DailyPatch, DaySummary, FoodDay, LastTime, LibraryExercise, Meal, MuscleDetail,
+  MuscleExercise, OpenWorkout, Person, PlannedExercise, SetWrite, TodayWorkout, TrainWeek, WeekPoint, WorkoutLog, WorkoutSummary,
 } from '../api'
 import { ApiError, backend, uploadPhoto } from '../backend'
 import { addDays, parseDate, today, weekStart } from '../dates'
 import {
   avg, dayBounds, db, lastCoachMessage, localDate, must, myId, nextCheckInDate, person, plannedMeals,
-  programWeek, round1, signedUrls, targetsOn, weekMonday,
+  programWeek, round1, sessionSummaries, sessionSummary, SESSION_SUMMARY_COLS, signedUrls, targetsOn, weekMonday,
 } from './shared'
+import { minutesSince, OWN_WORKOUT, weekPlan, workoutsDone, type PlanTemplate } from '../workouts'
 
 // ---------- Who am I ----------
 
-interface TemplateExercise { id: string; position: number; target_sets: number; target_reps: string; exercise_id: string; name: string }
-interface Template { id: string; name: string; day_of_week: number | null; position: number; exercises: TemplateExercise[] }
+interface TemplateExercise {
+  id: string; position: number; target_sets: number; target_reps: string; target_rpe: number | null; rest_seconds: number | null
+  exercise_id: string; name: string; cue: string | null
+}
+interface Template { id: string; name: string; day_of_week: number | null; position: number; notes: string | null; exercises: TemplateExercise[] }
 interface Program { id: string; name: string; start_date: string; weeks: number; templates: Template[] }
 
 interface Me {
   id: string
   person: Person
+  units: UnitSystem
   start_date: string
   start_weight_kg: number | null
   goal_weight_kg: number | null
@@ -35,7 +40,7 @@ interface Me {
 async function loadMe(): Promise<Me> {
   const uid = await myId()
   const [u, p] = await Promise.all([
-    db().from('users').select('id, full_name').eq('id', uid).single(),
+    db().from('users').select('id, full_name, unit_system').eq('id', uid).single(),
     // Column list on purpose: coach_notes is not readable by clients.
     db().from('client_profiles')
       .select('coach_id, start_date, start_weight_kg, goal_weight_kg, check_in_day, body_model, meals_per_day')
@@ -46,7 +51,7 @@ async function loadMe(): Promise<Me> {
   const [coachRes, programRes] = await Promise.all([
     prof.coach_id ? db().from('users').select('id, full_name').eq('id', prof.coach_id).maybeSingle() : null,
     db().from('programs')
-      .select('id, name, start_date, weeks, workout_templates(id, name, day_of_week, position, template_exercises(id, position, target_sets, target_reps, exercise_id, exercises(name)))')
+      .select('id, name, start_date, weeks, workout_templates(id, name, day_of_week, position, notes, template_exercises(id, position, target_sets, target_reps, target_rpe, rest_seconds, exercise_id, exercises(name, cue)))')
       .eq('client_id', uid)
       .lte('start_date', today())
       .order('start_date', { ascending: false })
@@ -57,6 +62,7 @@ async function loadMe(): Promise<Me> {
   return {
     id: uid,
     person: person(uid, user.full_name),
+    units: user.unit_system ?? 'metric',
     start_date: prof.start_date,
     start_weight_kg: prof.start_weight_kg != null ? Number(prof.start_weight_kg) : null,
     goal_weight_kg: prof.goal_weight_kg != null ? Number(prof.goal_weight_kg) : null,
@@ -67,10 +73,14 @@ async function loadMe(): Promise<Me> {
     program: prog ? {
       id: prog.id, name: prog.name, start_date: prog.start_date, weeks: prog.weeks,
       templates: (prog.workout_templates ?? []).map((t: any) => ({
-        id: t.id, name: t.name, day_of_week: t.day_of_week, position: t.position,
+        id: t.id, name: t.name, day_of_week: t.day_of_week, position: t.position, notes: t.notes,
         exercises: (t.template_exercises ?? [])
           .sort((a: any, b: any) => a.position - b.position)
-          .map((x: any) => ({ id: x.id, position: x.position, target_sets: x.target_sets, target_reps: x.target_reps, exercise_id: x.exercise_id, name: x.exercises?.name ?? 'Exercise' })),
+          .map((x: any) => ({
+            id: x.id, position: x.position, target_sets: x.target_sets, target_reps: x.target_reps,
+            target_rpe: x.target_rpe != null ? Number(x.target_rpe) : null, rest_seconds: x.rest_seconds,
+            exercise_id: x.exercise_id, name: x.exercises?.name ?? 'Exercise', cue: x.exercises?.cue ?? null,
+          })),
       })).sort((a: Template, b: Template) => a.position - b.position),
     } : null,
   }
@@ -128,13 +138,30 @@ function weightPoints(start: string, logs: DailyRow[], upTo: number, maxPoints =
   return points
 }
 
-async function exerciseSwaps(me: Me, week: number): Promise<Record<string, string>> {
+type Swaps = Record<string, { id: string; name: string; cue: string | null }>
+
+/** The coach's program swaps (exercise_swaps) in force in program week `week`, by template exercise. */
+async function exerciseSwaps(me: Me, week: number): Promise<Swaps> {
   const ids = me.program?.templates.flatMap((t) => t.exercises.map((x) => x.id)) ?? []
   if (!ids.length) return {}
   const rows = must(await db().from('exercise_swaps')
-    .select('template_exercise_id, from_week, to_week, to_exercise:exercises!exercise_swaps_to_exercise_id_fkey(name)')
+    .select('template_exercise_id, from_week, to_week, to_exercise_id, to_exercise:exercises!exercise_swaps_to_exercise_id_fkey(name, cue)')
     .in('template_exercise_id', ids).lte('from_week', week).gte('to_week', week))
-  return Object.fromEntries(rows.map((r: any) => [r.template_exercise_id, r.to_exercise?.name]))
+  return Object.fromEntries(rows.map((r: any) => [r.template_exercise_id, { id: r.to_exercise_id, name: r.to_exercise?.name ?? 'Exercise', cue: r.to_exercise?.cue ?? null }]))
+}
+
+/** A template as the client does it: swaps applied, the coach's targets per exercise. */
+function planned(t: Template, swaps: Swaps): PlanTemplate {
+  return {
+    id: t.id, name: t.name, day_of_week: t.day_of_week, notes: t.notes,
+    exercises: t.exercises.map((x): PlannedExercise => {
+      const sw = swaps[x.id]
+      return {
+        template_exercise_id: x.id, exercise_id: sw?.id ?? x.exercise_id, name: sw?.name ?? x.name, cue: sw ? sw.cue : x.cue,
+        sets: x.target_sets, reps: x.target_reps, rpe: x.target_rpe, rest_seconds: x.rest_seconds,
+      }
+    }),
+  }
 }
 
 async function todaysWorkout(me: Me, date: string, sessions: SessionRow[]): Promise<TodayWorkout | null> {
@@ -149,7 +176,7 @@ async function todaysWorkout(me: Me, date: string, sessions: SessionRow[]): Prom
   return {
     name: t.name,
     duration_min: null,
-    exercises: t.exercises.map((x) => ({ name: swaps[x.id] ?? x.name, sets: x.target_sets, reps: x.target_reps })),
+    exercises: t.exercises.map((x) => ({ name: swaps[x.id]?.name ?? x.name, sets: x.target_sets, reps: x.target_reps })),
     sets_done: done,
     sets_total: t.exercises.reduce((n, x) => n + x.target_sets, 0),
   }
@@ -225,7 +252,7 @@ async function home(): Promise<ClientHome> {
     return {
       date,
       is_today: date === t,
-      logged: dayMeals.length > 0 || !!(log && (log.steps ?? log.water_ml ?? log.sleep_hours ?? log.weight_kg ?? log.day_rating) != null),
+      logged: dayMeals.length > 0 || !!session || !!(log && (log.steps ?? log.water_ml ?? log.sleep_hours ?? log.weight_kg ?? log.day_rating) != null),
       workout,
       meals_on_plan: dayMeals.filter((m) => m.on_plan === 'yes').length,
       meals_planned: Math.max(planned.length, dayMeals.length),
@@ -254,7 +281,7 @@ async function home(): Promise<ClientHome> {
     program: { week, weeks: me.program?.weeks ?? null, start_date: me.start_date, has_program: !!me.program },
     days,
     week: {
-      workouts_done: sessions.filter((s) => s.status === 'done').length,
+      workouts_done: workoutsDone(sessions, !!me.program),
       workouts_planned: templates.length,
       meals_on_plan: meals.filter((m) => m.on_plan === 'yes').length,
       meals_planned: planned.length * 7,
@@ -298,20 +325,30 @@ async function trainWeek(): Promise<TrainWeek> {
   const me = await loadMe()
   const t = today()
   const ws = weekStart(t)
-  const [rows, sessions] = await Promise.all([
+  const [rows, sessions, open, recent, swaps] = await Promise.all([
     db().rpc('muscle_sets_for_week', { client: me.id, week_start: ws }),
-    sessionsBetween(me.id, t, t),
+    db().from('workout_sessions').select('id, workout_template_id, performed_on, finished_at')
+      .eq('client_id', me.id).gte('performed_on', ws).lte('performed_on', addDays(ws, 6)),
+    openWorkout(me.id),
+    sessionSummaries(me.id, 5),
+    me.program ? exerciseSwaps(me, programWeek(me.program.start_date, t)) : Promise.resolve({} as Swaps),
   ])
   const sets = Object.fromEntries(MUSCLE_GROUPS.map((m) => [m, 0])) as Record<MuscleGroup, number>
   for (const r of must(rows) as { muscle: MuscleGroup; hard_sets: number }[]) sets[r.muscle] = r.hard_sets
+  const weekSessions = (must(sessions) as any[]).map((s) => ({ id: s.id, workout_template_id: s.workout_template_id, performed_on: s.performed_on, finished: s.finished_at != null }))
+  if (open) weekSessions.push({ id: open.id, workout_template_id: open.template_id, performed_on: open.performed_on, finished: false })
+  const startDate = me.program && me.program.start_date > me.start_date ? me.program.start_date : me.start_date
   return {
     today: t,
     week: programWeek(me.start_date, t),
     weeks: me.program?.weeks ?? null,
     body_model: me.body_model,
     sets,
-    workout: await todaysWorkout(me, t, sessions),
     has_program: !!me.program,
+    units: me.units,
+    plan: weekPlan((me.program?.templates ?? []).map((x) => planned(x, swaps)), weekSessions, t, startDate),
+    open_workout: open,
+    recent,
   }
 }
 
@@ -388,6 +425,139 @@ async function setBodyModel(model: BodyModel) {
   return { body_model: model }
 }
 
+// ---------- Workouts ----------
+// Sessions and sets go straight to Supabase as the client; RLS (0013) lets a
+// client write only their own, and their coach only read them. A session is
+// open while finished_at is null; each set is saved when it's ticked.
+
+function toLibrary(r: any): LibraryExercise {
+  const muscles = (r.exercise_muscles ?? []) as { muscle: MuscleGroup; role: 'primary' | 'secondary' }[]
+  return {
+    id: r.id, name: r.name, level: r.level, equipment: r.equipment ?? '', cue: r.cue ?? null,
+    primary: muscles.filter((m) => m.role === 'primary').map((m) => m.muscle),
+    secondary: muscles.filter((m) => m.role === 'secondary').map((m) => m.muscle),
+  }
+}
+
+async function exerciseLibrary(): Promise<LibraryExercise[]> {
+  // RLS returns the shared library plus the coach's own exercises.
+  const rows = must(await db().from('exercises').select('id, name, level, equipment, cue, exercise_muscles(muscle, role)').order('name'))
+  return (rows as any[]).map(toLibrary)
+}
+
+async function openWorkout(uid: string): Promise<(OpenWorkout & { template_id: string | null }) | null> {
+  const row: any = must(await db().from('workout_sessions')
+    .select('id, workout_template_id, performed_on, started_at, workout_templates(name), set_logs(count)')
+    .eq('client_id', uid).is('finished_at', null).maybeSingle())
+  if (!row) return null
+  return {
+    id: row.id, template_id: row.workout_template_id, name: row.workout_templates?.name ?? OWN_WORKOUT,
+    performed_on: row.performed_on, started_at: row.started_at, sets_done: row.set_logs?.[0]?.count ?? 0,
+  }
+}
+
+async function startWorkout(templateId: string | null): Promise<{ id: string }> {
+  const uid = await myId()
+  const open = await openWorkout(uid)
+  if (open) return { id: open.id }
+  const res = await db().from('workout_sessions').insert({
+    client_id: uid, workout_template_id: templateId, performed_on: today(),
+    started_at: new Date().toISOString(), finished_at: null, status: 'partial',
+  }).select('id').single()
+  if (res.error?.code === '23505') {
+    // Started on another device a moment ago: resume that one.
+    const again = await openWorkout(uid)
+    if (again) return { id: again.id }
+  }
+  return { id: must(res).id }
+}
+
+async function workoutLog(id: string): Promise<WorkoutLog> {
+  const me = await loadMe()
+  const s: any = must(await db().from('workout_sessions')
+    .select('id, workout_template_id, performed_on, started_at, finished_at, duration_min, notes, workout_templates(name), set_logs(exercise_id, template_exercise_id, set_number, reps, weight_kg, rpe)')
+    .eq('id', id).eq('client_id', me.id).maybeSingle())
+  if (!s) throw new ApiError(404, "That workout doesn't exist.")
+  const template = me.program?.templates.find((x) => x.id === s.workout_template_id)
+  const swaps = template && me.program ? await exerciseSwaps(me, programWeek(me.program.start_date, s.performed_on)) : {}
+  const n = (x: unknown) => (x == null ? null : Number(x))
+  return {
+    id: s.id,
+    name: s.workout_templates?.name ?? OWN_WORKOUT,
+    template_id: s.workout_template_id,
+    performed_on: s.performed_on,
+    started_at: s.started_at,
+    finished_at: s.finished_at,
+    duration_min: s.duration_min,
+    notes: s.notes ?? '',
+    units: me.units,
+    coach_notes: template?.notes ?? null,
+    plan: template ? planned(template, swaps).exercises : [],
+    sets: (s.set_logs ?? []).map((l: any): SetWrite => ({
+      exercise_id: l.exercise_id, template_exercise_id: l.template_exercise_id, set_number: l.set_number,
+      reps: l.reps, weight_kg: n(l.weight_kg), rpe: n(l.rpe),
+    })),
+  }
+}
+
+/** For each exercise, the sets from the most recent other session that had it. */
+async function lastTime(sessionId: string, exerciseIds: string[]): Promise<Record<string, LastTime>> {
+  if (!exerciseIds.length) return {}
+  const uid = await myId()
+  const rows = must(await db().from('set_logs')
+    .select('exercise_id, set_number, reps, weight_kg, rpe, session_id, workout_sessions!inner(client_id, performed_on, started_at)')
+    .eq('workout_sessions.client_id', uid).in('exercise_id', exerciseIds).neq('session_id', sessionId).eq('is_warmup', false)
+    .limit(1000)) as any[]
+  const latest: Record<string, { key: string; session: string; date: string; sets: LastTime['sets'] }> = {}
+  for (const r of rows) {
+    const key = `${r.workout_sessions.performed_on} ${r.workout_sessions.started_at ?? ''}`
+    const cur = latest[r.exercise_id]
+    if (!cur || key > cur.key) latest[r.exercise_id] = { key, session: r.session_id, date: r.workout_sessions.performed_on, sets: [] }
+  }
+  for (const r of rows) {
+    const cur = latest[r.exercise_id]
+    if (cur?.session === r.session_id) {
+      cur.sets.push({ set_number: r.set_number, reps: r.reps, weight_kg: r.weight_kg == null ? null : Number(r.weight_kg), rpe: r.rpe == null ? null : Number(r.rpe) })
+    }
+  }
+  return Object.fromEntries(Object.entries(latest).map(([k, v]) => [k, { date: v.date, sets: v.sets.sort((a, b) => a.set_number - b.set_number) }]))
+}
+
+async function saveSet(sessionId: string, set: SetWrite) {
+  must(await db().from('set_logs').upsert({
+    session_id: sessionId, exercise_id: set.exercise_id, template_exercise_id: set.template_exercise_id,
+    set_number: set.set_number, reps: set.reps, weight_kg: set.weight_kg, rpe: set.rpe, is_warmup: false,
+  }, { onConflict: 'session_id,exercise_id,set_number' }))
+  return { ok: true }
+}
+
+async function deleteSet(sessionId: string, exerciseId: string, setNumber: number) {
+  must(await db().from('set_logs').delete().eq('session_id', sessionId).eq('exercise_id', exerciseId).eq('set_number', setNumber))
+  return { ok: true }
+}
+
+async function saveWorkoutNote(id: string, notes: string) {
+  must(await db().from('workout_sessions').update({ notes: notes.trim() || null }).eq('id', id))
+  return { ok: true }
+}
+
+async function finishWorkout(id: string): Promise<WorkoutSummary> {
+  const s: any = must(await db().from('workout_sessions').select('started_at, finished_at, set_logs(count)').eq('id', id).maybeSingle())
+  if (!s) throw new ApiError(404, "That workout doesn't exist.")
+  if (!s.finished_at) {
+    if (!(s.set_logs?.[0]?.count > 0)) throw new ApiError(409, 'Tick at least one set first, or discard the workout.')
+    must(await db().from('workout_sessions')
+      .update({ finished_at: new Date().toISOString(), duration_min: minutesSince(s.started_at), status: 'done' })
+      .eq('id', id))
+  }
+  return sessionSummary(must(await db().from('workout_sessions').select(SESSION_SUMMARY_COLS).eq('id', id).single()))
+}
+
+async function discardWorkout(id: string) {
+  must(await db().from('workout_sessions').delete().eq('id', id).is('finished_at', null))
+  return { ok: true }
+}
+
 // ---------- Check-in ----------
 
 async function checkinDraft(): Promise<CheckinDraft | null> {
@@ -417,7 +587,7 @@ async function checkinDraft(): Promise<CheckinDraft | null> {
     week_start: ws,
     week: programWeek(me.start_date, ws),
     auto: {
-      workouts_done: sessions.filter((s) => s.status === 'done').length,
+      workouts_done: workoutsDone(sessions, !!me.program),
       workouts_planned: plannedTemplates(me.program).length,
       meals_on_plan: meals.filter((m) => m.on_plan === 'yes').length,
       meals_planned: meals.length,
@@ -494,7 +664,7 @@ async function progress(): Promise<ClientProgress> {
   const mean = (a: number | null, b: number | null) => (a == null ? b : b == null ? a : (a + b) / 2)
   const byWeek = Object.fromEntries((must(summaries) as any[]).map((s) => [s.week_start, mean(s.training_pct == null ? null : Number(s.training_pct), s.nutrition_pct == null ? null : Number(s.nutrition_pct))]))
   const planned = plannedTemplates(me.program).length
-  const liveTraining = planned ? Math.min(100, (sessions.filter((s) => s.status === 'done').length / planned) * 100) : null
+  const liveTraining = planned ? Math.min(100, (workoutsDone(sessions, true) / planned) * 100) : null
   const liveFood = meals.length ? (meals.filter((m) => m.on_plan === 'yes').length / meals.length) * 100 : null
   const plan = Array.from({ length: Math.min(week, 6) }, (_, i) => {
     const w = week - Math.min(week, 6) + 1 + i
@@ -526,4 +696,5 @@ async function progress(): Promise<ClientProgress> {
 export const liveClient = {
   home, trainWeek, muscle, foodDay: (date: string) => foodDay(date), rateDay, logMeal, logDaily,
   checkinDraft, saveCheckin, submitCheckin, progress, setBodyModel,
+  exerciseLibrary, startWorkout, workoutLog, lastTime, saveSet, deleteSet, saveWorkoutNote, finishWorkout, discardWorkout,
 }

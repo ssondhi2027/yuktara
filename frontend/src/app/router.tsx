@@ -15,6 +15,7 @@ import { ComingSoon } from './ComingSoon'
 
 // three.js is ~600 kB; only the Train tab pays for it.
 const TrainPage = lazy(() => import('@/features/client/train/TrainPage'))
+const WorkoutPage = lazy(() => import('@/features/client/train/WorkoutPage'))
 
 export const router = createBrowserRouter([
   // The app opens here when nobody is signed in.
@@ -25,6 +26,7 @@ export const router = createBrowserRouter([
     children: [
       { index: true, element: <ClientHomePage /> },
       { path: 'train', element: <Suspense fallback={<PageLoading />}><TrainPage /></Suspense> },
+      { path: 'train/workout/:id', element: <Suspense fallback={<PageLoading />}><WorkoutPage /></Suspense> },
       { path: 'food', element: <FoodPage /> },
       { path: 'check-in', element: <CheckinPage /> },
       { path: 'progress', element: <ProgressPage /> },

@@ -1,5 +1,4 @@
 import { Suspense, lazy, useCallback, useState } from 'react'
-import { Link } from 'react-router'
 import { useQuery } from '@tanstack/react-query'
 import { ChevronLeft, ChevronRight, LocateFixed, Maximize, RotateCw } from 'lucide-react'
 import type { Vector3 } from 'three'
@@ -12,6 +11,7 @@ import { Segmented } from '@/components/ui/Segmented'
 import { PageError, PageLoading } from '@/components/ui/Loading'
 import { BodyMapProgress, type ColorMode, type HoverInfo } from './BodyMap'
 import { MuscleDetail, MuscleSheet } from './MuscleSheet'
+import { TodayCard, WorkoutWeek } from './WorkoutPanel'
 import './train.css'
 
 const BodyMap = lazy(() => import('./BodyMap'))
@@ -112,23 +112,7 @@ function Train({ data }: { data: TrainWeek }) {
     </p>
   )
 
-  const w = data.workout
-  const todayBar = w ? (
-    <section className="today-bar">
-      <div className="grow">
-        <div className="small" style={{ opacity: 0.8 }}>Today · {w.name}{!phone && w.duration_min ? ` · ${w.duration_min} min` : ''}</div>
-        <b className="num today-sets">{w.sets_done} of {w.sets_total} sets done</b>
-      </div>
-      <Link to="/" className="btn btn-gold btn-lg">{phone ? 'Continue' : 'Continue workout'}</Link>
-    </section>
-  ) : (
-    <section className="today-bar">
-      <div className="grow">
-        <div className="small" style={{ opacity: 0.8 }}>Today</div>
-        <b className="today-sets">{data.has_program ? 'Rest day' : 'Your coach is setting up your plan'}</b>
-      </div>
-    </section>
-  )
+  const todayBar = <TodayCard data={data} compact={phone} />
 
   return (
     <div className="page train">
@@ -181,9 +165,11 @@ function Train({ data }: { data: TrainWeek }) {
             )}
             {todayBar}
           </section>
+          <div className="train-wide"><WorkoutWeek data={data} /></div>
         </div>
       ) : (
         <div className="stack" style={{ gap: 16 }}>
+          {todayBar}
           <div className="stack" style={{ gap: 6 }}>{mapCard}{credit}</div>
           <div className="between">
             <h3>Browse by muscle</h3>
@@ -198,7 +184,7 @@ function Train({ data }: { data: TrainWeek }) {
               </button>
             ))}
           </div>
-          {todayBar}
+          <WorkoutWeek data={data} />
         </div>
       )}
 

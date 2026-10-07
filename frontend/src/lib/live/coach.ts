@@ -8,13 +8,14 @@
 import type { CheckinStatus, GoalType, PhotoPose, WeekStatus } from '@/types/db'
 import type {
   AttentionItem, CheckinLists, CheckinReview, ClientDetail, ClientRow, ClientWeekStatus, CoachDashboard, Person,
-  QueueItem, SwapRequest, Targets, WeekPoint,
+  QueueItem, SwapRequest, Targets, WeekPoint, WorkoutSummary,
 } from '../api'
 import { ApiError, backend } from '../backend'
+import { workoutsDone } from '../workouts'
 import { addDays, clockTime, monthDay, today, weekday, weekStart } from '../dates'
 import {
-  WEEKDAYS, avg, dayBounds, db, localDate, must, myId, nextCheckInDate, person, programWeek, round1, signedUrls,
-  targetsOn, weekMonday,
+  WEEKDAYS, avg, dayBounds, db, localDate, must, myId, nextCheckInDate, person, programWeek, round1, sessionSummaries,
+  signedUrls, targetsOn, weekMonday,
 } from './shared'
 
 const PROFILE_COLS =
@@ -75,7 +76,7 @@ async function loadClients(): Promise<{ uid: string; coach: Person; invite_code:
 interface Activity {
   logs: { client_id: string; log_date: string; weight_kg: number | null; steps: number | null }[]
   meals: { client_id: string; eaten_at: string; on_plan: string | null }[]
-  sessions: { client_id: string; performed_on: string; status: string }[]
+  sessions: { client_id: string; performed_on: string; status: string; workout_template_id: string | null }[]
   checkIns: CheckIn[]
   withTargets: Set<string>
   summaries: { client_id: string; week_start: string; training_pct: number | null; nutrition_pct: number | null; status: WeekStatus }[]
@@ -98,7 +99,7 @@ async function loadActivity(ids: string[]): Promise<Activity> {
   const cis = (must(checkIns) as any[]).map((c) => ({ ...c, avg_weight_kg: c.avg_weight_kg == null ? null : Number(c.avg_weight_kg) }))
   const queueWeeks = cis.filter((c) => c.status === 'submitted').map((c) => c.week_start)
   const from = [ws, ...queueWeeks].sort()[0]
-  const sessions = must(await db().from('workout_sessions').select('client_id, performed_on, status').in('client_id', ids).gte('performed_on', from))
+  const sessions = must(await db().from('workout_sessions').select('client_id, performed_on, status, workout_template_id').in('client_id', ids).gte('performed_on', from))
   return {
     logs: (must(logs) as any[]).map((l) => ({ ...l, weight_kg: l.weight_kg == null ? null : Number(l.weight_kg) })),
     meals: must(meals),
@@ -131,8 +132,9 @@ function weekStats(c: Client, a: Activity) {
   const days = new Set([
     ...meals.map((m) => localDate(m.eaten_at)),
     ...logs.filter((l) => l.log_date >= ws && (l.weight_kg != null || l.steps != null)).map((l) => l.log_date),
+    ...sessions.map((s) => s.performed_on),
   ])
-  const done = sessions.filter((s) => s.status === 'done').length
+  const done = workoutsDone(sessions, !!c.program)
   const planned = c.program?.planned ?? 0
   const foodPct = meals.length ? Math.round((meals.filter((m) => m.on_plan === 'yes').length / meals.length) * 100) : null
   const trainingPct = planned ? Math.min(100, Math.round((done / planned) * 100)) : null
@@ -193,7 +195,7 @@ function queueFor(clients: Client[], a: Activity): QueueItem[] {
     const prev = a.checkIns.find((x) => x.client_id === ci.client_id && x.week_start < ci.week_start && x.avg_weight_kg != null)
     const sum = a.summaries.find((x) => x.client_id === ci.client_id && x.week_start === ci.week_start)
     const weekSessions = a.sessions.filter((s) => s.client_id === ci.client_id && s.performed_on >= ci.week_start && s.performed_on <= addDays(ci.week_start, 6))
-    const missed = (client.program?.planned ?? 0) - weekSessions.filter((s) => s.status === 'done').length
+    const missed = (client.program?.planned ?? 0) - workoutsDone(weekSessions, true)
     const flags: string[] = []
     if (client.program && missed >= 2) flags.push(`${missed} sessions missed`)
     if (ci.sleep != null && ci.sleep <= 2) flags.push(`Sleep ${ci.sleep} of 5`)
@@ -314,7 +316,7 @@ async function checkinReview(id: string): Promise<CheckinReview> {
     db().from('programs').select('weeks, start_date, workout_templates(id, day_of_week)').eq('client_id', clientId).lte('start_date', ws).order('start_date', { ascending: false }).limit(1),
     db().from('daily_logs').select('log_date, weight_kg').eq('client_id', clientId).not('weight_kg', 'is', null),
     db().from('meal_logs').select('on_plan').eq('client_id', clientId).gte('eaten_at', dayBounds(ws)[0]).lt('eaten_at', dayBounds(addDays(ws, 7))[0]),
-    db().from('workout_sessions').select('status').eq('client_id', clientId).gte('performed_on', ws).lte('performed_on', addDays(ws, 6)),
+    db().from('workout_sessions').select('status, workout_template_id').eq('client_id', clientId).gte('performed_on', ws).lte('performed_on', addDays(ws, 6)),
     db().from('check_ins').select('week_start, avg_weight_kg, waist_cm').eq('client_id', clientId).lt('week_start', ws).order('week_start', { ascending: false }),
     db().from('weekly_summaries').select('week_start, training_pct, nutrition_pct, status').eq('client_id', clientId).order('week_start'),
     db().from('progress_photos').select('pose, photo_url').eq('check_in_id', id),
@@ -344,7 +346,7 @@ async function checkinReview(id: string): Promise<CheckinReview> {
   const thisSum = sums.find((s) => s.week_start === ws)
   const mealRows = must(meals) as any[]
   const onPlan = mealRows.filter((m) => m.on_plan === 'yes').length
-  const done = (must(sessions) as any[]).filter((s) => s.status === 'done').length
+  const done = workoutsDone(must(sessions) as any[], !!prog)
   const photoRows = must(photos) as { pose: PhotoPose; photo_url: string }[]
   const urls = await signedUrls(photoRows.map((x) => x.photo_url))
   const d = must(draft)
@@ -482,4 +484,7 @@ async function setTargets(clientId: string, t: Targets) {
   return { ok: true }
 }
 
-export const liveCoach = { dashboard, checkinLists, checkinReview, saveReviewDraft, applySuggestion, clientDetail, setTargets }
+/** The client's last 20 sessions, including one in progress. RLS (0013) makes them read-only for the coach. */
+const clientWorkouts = (clientId: string): Promise<WorkoutSummary[]> => sessionSummaries(clientId, 20, false)
+
+export const liveCoach = { dashboard, checkinLists, checkinReview, saveReviewDraft, applySuggestion, clientDetail, setTargets, clientWorkouts }

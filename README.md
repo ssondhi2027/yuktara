@@ -30,7 +30,7 @@ The app has two modes, and they never mix:
 
 Sample numbers never appear in Supabase mode: a brand-new account sees empty states ("no meals yet", "waiting for your coach") until there's real data.
 
-- Client app: `/`, `/train`, `/food`, `/check-in`, `/progress`
+- Client app: `/`, `/train` (and `/train/workout/:id` to log a workout), `/food`, `/check-in`, `/progress`
 - Coach app: `/coach`, `/coach/check-ins/:id`
 - Avatar menu: theme (light, dark, auto) and Log out.
 
@@ -47,7 +47,7 @@ Then:
 - **`backend/.env`**: set `SUPABASE_SERVICE_ROLE_KEY=<service role key>`.
 - **Run both:** `make dev` (API) and `cd frontend && npm run dev`.
 
-Confirmation emails land in Mailpit at http://127.0.0.1:54324. `make walkthrough` runs the whole flow (coach, client, logs, check-in, review) against this stack.
+Confirmation emails land in Mailpit at http://127.0.0.1:54324. `make walkthrough` runs the whole flow (coach, client, logs, a program and two logged workouts, check-in, review) against this stack.
 
 Layouts follow the three artboard sizes:
 

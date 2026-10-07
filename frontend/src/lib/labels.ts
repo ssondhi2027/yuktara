@@ -7,6 +7,7 @@ export const GOAL_LABEL: Record<GoalType, string> = {
   health: 'General health',
 }
 
+export const LEVEL_LABEL = { beginner: 'Beginner', intermediate: 'Intermediate', advanced: 'Advanced' } as const
 export const EXPERIENCE_LABEL = { beginner: 'New', intermediate: '1–3 years', advanced: '3+ years' } as const
 export const LOCATION_LABEL = { gym: 'Gym', home: 'Home', both: 'Gym and home' } as const
 export const DIET_LABEL = {

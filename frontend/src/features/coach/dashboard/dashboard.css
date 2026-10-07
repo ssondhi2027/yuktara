@@ -42,3 +42,10 @@
 .answers-list > div { display: grid; grid-template-columns: 110px 1fr; gap: 10px; font-size: 14px; }
 .answers-list dt { color: var(--ink-2); }
 .answers-list dd { margin: 0; }
+
+/* Client sheet: logged workouts (read-only) */
+.client-workouts { margin-top: 20px; }
+.client-workouts summary { cursor: pointer; list-style: none; }
+.client-workouts summary::-webkit-details-marker { display: none; }
+.workout-detail { margin-top: 8px; padding: 10px 12px; border-radius: 12px; background: var(--surface-2); }
+.workout-detail > div { grid-template-columns: minmax(0, 140px) 1fr; }

@@ -11,7 +11,7 @@
 
 import type {
   AnswerType, BodyModel, CheckinStatus, DietType, ExerciseLevel, GoalType, MealType, MuscleGroup, OnPlan,
-  PhotoPose, SessionStatus, TrainLocation, WeekStatus,
+  PhotoPose, SessionStatus, TrainLocation, UnitSystem, WeekStatus,
 } from '@/types/db'
 import { backend } from './backend'
 import { demo } from './demo'
@@ -124,8 +124,93 @@ export interface TrainWeek {
   weeks: number | null
   body_model: BodyModel
   sets: Record<MuscleGroup, number>
-  workout: TodayWorkout | null
   has_program: boolean
+  units: UnitSystem
+  /** this week's planned workouts, Monday first; empty without a program */
+  plan: PlannedWorkout[]
+  /** a started, unfinished workout (from any day) */
+  open_workout: OpenWorkout | null
+  recent: WorkoutSummary[]
+}
+
+// ---------- Workouts ----------
+/** An exercise from the shared library (or the coach's own), as the picker shows it. */
+export interface LibraryExercise {
+  id: string
+  name: string
+  level: ExerciseLevel
+  equipment: string
+  cue: string | null
+  primary: MuscleGroup[]
+  secondary: MuscleGroup[]
+}
+
+/** One slot of a planned workout, with this week's program swaps applied. */
+export interface PlannedExercise {
+  template_exercise_id: string
+  exercise_id: string
+  name: string
+  sets: number
+  reps: string
+  rpe: number | null
+  rest_seconds: number | null
+  cue: string | null
+}
+
+export type PlannedStatus = 'done' | 'in_progress' | 'today' | 'missed' | 'upcoming' | 'anytime'
+
+export interface PlannedWorkout {
+  template_id: string
+  name: string
+  /** this week's date for it; null if the coach gave it no day */
+  date: string | null
+  notes: string | null
+  exercises: PlannedExercise[]
+  status: PlannedStatus
+  /** the session that did it (done or in progress) */
+  session_id: string | null
+}
+
+export interface OpenWorkout { id: string; name: string; performed_on: string; started_at: string | null; sets_done: number }
+
+export interface LoggedSet { set_number: number; weight_kg: number | null; reps: number | null; rpe: number | null }
+
+/** A set as saved: which exercise, and which planned slot it was logged against (null = added by the client). */
+export interface SetWrite extends LoggedSet { exercise_id: string; template_exercise_id: string | null }
+
+export interface WorkoutLog {
+  id: string
+  name: string
+  template_id: string | null
+  performed_on: string
+  started_at: string | null
+  finished_at: string | null
+  duration_min: number | null
+  notes: string
+  units: UnitSystem
+  /** the coach's note on this workout (workout_templates.notes) */
+  coach_notes: string | null
+  /** the planned slots in order; empty for the client's own workout */
+  plan: PlannedExercise[]
+  /** every saved (ticked) set */
+  sets: SetWrite[]
+}
+
+/** The client's most recent sets of an exercise, before this session. */
+export interface LastTime { date: string; sets: LoggedSet[] }
+
+export interface WorkoutSummary {
+  id: string
+  name: string
+  performed_on: string
+  finished: boolean
+  duration_min: number | null
+  sets: number
+  /** Σ weight × reps, in kg */
+  volume_kg: number
+  muscles: MuscleGroup[]
+  notes: string | null
+  exercises: { name: string; sets: LoggedSet[] }[]
 }
 
 export interface CheckinQuestion { id: string; prompt: string; answer_type: AnswerType }
@@ -326,6 +411,22 @@ export const api = {
   progress: (): Promise<ClientProgress> => (isDemo ? wait(demo.progress()) : liveClient.progress()),
   setBodyModel: (m: BodyModel) => (isDemo ? wait(demo.setBodyModel(m)) : liveClient.setBodyModel(m)),
 
+  // workouts (client writes straight to Supabase, RLS: only their own sessions and sets)
+  exerciseLibrary: (): Promise<LibraryExercise[]> => (isDemo ? wait(demo.exerciseLibrary()) : liveClient.exerciseLibrary()),
+  /** Starts a session (templateId null = the client's own workout), or returns the one already open. */
+  startWorkout: (templateId: string | null): Promise<{ id: string }> =>
+    isDemo ? wait(demo.startWorkout(templateId)) : liveClient.startWorkout(templateId),
+  workoutLog: (id: string): Promise<WorkoutLog> => (isDemo ? wait(demo.workoutLog(id)) : liveClient.workoutLog(id)),
+  lastTime: (sessionId: string, exerciseIds: string[]): Promise<Record<string, LastTime>> =>
+    isDemo ? wait(demo.lastTime(sessionId, exerciseIds)) : liveClient.lastTime(sessionId, exerciseIds),
+  saveSet: (sessionId: string, set: SetWrite) => (isDemo ? wait(demo.saveSet(sessionId, set)) : liveClient.saveSet(sessionId, set)),
+  deleteSet: (sessionId: string, exerciseId: string, setNumber: number) =>
+    isDemo ? wait(demo.deleteSet(sessionId, exerciseId, setNumber)) : liveClient.deleteSet(sessionId, exerciseId, setNumber),
+  saveWorkoutNote: (id: string, notes: string) => (isDemo ? wait(demo.saveWorkoutNote(id, notes)) : liveClient.saveWorkoutNote(id, notes)),
+  finishWorkout: (id: string): Promise<WorkoutSummary> => (isDemo ? wait(demo.finishWorkout(id)) : liveClient.finishWorkout(id)),
+  /** Deletes an open session with nothing logged. */
+  discardWorkout: (id: string) => (isDemo ? wait(demo.discardWorkout(id)) : liveClient.discardWorkout(id)),
+
   // coach
   coachDashboard: (): Promise<CoachDashboard> => (isDemo ? wait(demo.coachDashboard()) : liveCoach.dashboard()),
   checkinLists: (): Promise<CheckinLists> => (isDemo ? wait(demo.checkinLists()) : liveCoach.checkinLists()),
@@ -338,7 +439,13 @@ export const api = {
   clientDetail: (clientId: string): Promise<ClientDetail> => (isDemo ? wait(demo.clientDetail(clientId)) : liveCoach.clientDetail(clientId)),
   /** The coach sets targets that apply from today. */
   setTargets: (clientId: string, targets: Targets) => (isDemo ? wait(demo.setTargets(clientId, targets)) : liveCoach.setTargets(clientId, targets)),
+  /** A client's logged workouts, newest first (read-only for the coach). */
+  clientWorkouts: (clientId: string): Promise<WorkoutSummary[]> =>
+    isDemo ? wait(demo.clientWorkouts(clientId)) : liveCoach.clientWorkouts(clientId),
 }
+
+/** Everything that shows logged training; invalidated after each set is saved. */
+export const TRAINING_KEYS = [['train'], ['client-home'], ['progress'], ['muscle'], ['checkin']] as const
 
 export type Api = typeof api
 

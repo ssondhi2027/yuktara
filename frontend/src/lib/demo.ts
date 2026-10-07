@@ -5,11 +5,13 @@
 import type { BodyModel, ExerciseLevel, MealType, MuscleGroup, OnPlan } from '@/types/db'
 import type {
   CheckinDraft, CheckinLists, CheckinReview, ClientDetail, ClientHome, ClientProgress, ClientRow,
-  CoachDashboard, CoachNote, DailyPatch, DaySummary, FoodDay, Meal, MuscleDetail, Person, QueueItem,
-  Targets, TodayWorkout, TrainWeek,
+  CoachDashboard, CoachNote, DailyPatch, DaySummary, FoodDay, LastTime, LibraryExercise, Meal, MuscleDetail, Person,
+  PlannedExercise, QueueItem, SetWrite, Targets, TodayWorkout, TrainWeek, WorkoutLog, WorkoutSummary,
 } from './api'
 import type { GoalType } from '@/types/db'
 import { addDays, pinToday } from './dates'
+import { ApiError } from './backend'
+import { minutesSince, OWN_WORKOUT, summarize, weekPlan, type PlanTemplate } from './workouts'
 import { getCurrentUser } from './session'
 import { isDemo } from './supabase'
 
@@ -177,6 +179,96 @@ const library: { name: string; level: ExerciseLevel; equipment: string; primary:
   { name: "Jump rope", level: 'beginner', equipment: 'jump rope', primary: ['calves'], secondary: ['quads'], week: 0, cue: "Light, quick bounces on the balls of the feet." },
 ]
 
+const exId = (name: string) => `ex-${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`
+const exerciseLibrary: LibraryExercise[] = library.map((e) => ({
+  id: exId(e.name), name: e.name, level: e.level, equipment: e.equipment, cue: e.cue, primary: e.primary, secondary: e.secondary,
+}))
+const exerciseById = new Map(exerciseLibrary.map((e) => [e.id, e]))
+
+// ---------- Aisha's program and workout log ----------
+// Four workouts a week; Full body C (today) is in progress with 3 sets done,
+// matching the Home screen. Last Sunday's Full body C gives "last time".
+const PROGRAM_START = '2026-08-24'
+
+let slotSeq = 0
+const slot = (name: string, sets: number, reps: string, rpe: number | null = 8, rest: number | null = 90): PlannedExercise => {
+  const e = exerciseLibrary.find((x) => x.name === name)!
+  return { template_exercise_id: `te-${++slotSeq}`, exercise_id: e.id, name, cue: e.cue, sets, reps, rpe, rest_seconds: rest }
+}
+
+const templates: PlanTemplate[] = [
+  { id: 'wt-upper-a', name: 'Upper A', day_of_week: 1, notes: null, exercises: [
+    slot('Dumbbell bench press', 3, '8–10'), slot('Seated cable row', 3, '10–12'), slot('Seated dumbbell shoulder press', 3, '10'),
+    slot('Lat pulldown', 3, '10'), slot('Rope pushdown', 2, '12', 9, 60),
+  ] },
+  { id: 'wt-lower-a', name: 'Lower A', day_of_week: 2, notes: null, exercises: [
+    slot('Back squat', 4, '6', 8, 180), slot('Romanian deadlift', 3, '8', 7, 120), slot('Walking lunge', 3, '10'), slot('Standing calf raise', 3, '12', 9, 60),
+  ] },
+  { id: 'wt-upper-b', name: 'Upper B', day_of_week: 4, notes: null, exercises: [
+    slot('Incline dumbbell press', 3, '10'), slot('Single-arm dumbbell row', 3, '10'), slot('Lateral raise', 3, '15', 9, 60), slot('Dumbbell curl', 3, '12', 9, 60),
+  ] },
+  { id: 'wt-full-c', name: 'Full body C', day_of_week: 0, notes: 'Keep the RDLs light: lower back first.', exercises: [
+    slot('Back squat', 4, '6', 8, 180), slot('Romanian deadlift', 3, '8', 7, 120), slot('Dumbbell bench press', 3, '10'),
+    slot('Seated cable row', 3, '12'), slot('Walking lunge', 3, '10', 8, 60), slot('Plank', 3, '45', null, 45),
+  ] },
+]
+
+interface DemoSession {
+  id: string; template_id: string | null; performed_on: string; started_at: string | null; finished_at: string | null
+  duration_min: number | null; notes: string; sets: SetWrite[]
+}
+
+/** Sets for one planned slot: [kg, reps, rpe] each. */
+function logged(t: PlanTemplate, i: number, sets: [number | null, number, number | null][]): SetWrite[] {
+  const x = t.exercises[i]
+  return sets.map(([kg, reps, rpe], n) => ({ exercise_id: x.exercise_id, template_exercise_id: x.template_exercise_id, set_number: n + 1, weight_kg: kg, reps, rpe }))
+}
+const [upperA, lowerA, , fullC] = templates
+const sessions = new Map<string, DemoSession>([
+  ['w-prev-c', { id: 'w-prev-c', template_id: fullC.id, performed_on: '2026-09-27', started_at: '2026-09-27T17:30:00', finished_at: '2026-09-27T18:24:00', duration_min: 54, notes: '', sets: [
+    ...logged(fullC, 0, [[80, 6, 8], [80, 6, 8], [80, 6, 8.5], [80, 5, 9]]), ...logged(fullC, 1, [[67.5, 8, 7], [67.5, 8, 7], [67.5, 8, 7.5]]),
+    ...logged(fullC, 2, [[16, 10, 8], [16, 10, 8], [16, 9, 9]]), ...logged(fullC, 3, [[42.5, 12, 8], [42.5, 12, 8], [42.5, 11, 9]]),
+    ...logged(fullC, 4, [[12, 10, 8], [12, 10, 8], [12, 10, 8]]), ...logged(fullC, 5, [[null, 45, null], [null, 45, null], [null, 40, null]]),
+  ] }],
+  ['w-upper-a', { id: 'w-upper-a', template_id: upperA.id, performed_on: '2026-09-28', started_at: '2026-09-28T07:05:00', finished_at: '2026-09-28T07:52:00', duration_min: 47, notes: '', sets: [
+    ...logged(upperA, 0, [[18, 10, 8], [18, 10, 8], [18, 9, 9]]), ...logged(upperA, 1, [[45, 12, 8], [45, 12, 8], [45, 11, 9]]),
+    ...logged(upperA, 2, [[14, 10, 8], [14, 9, 9], [14, 8, 9]]), ...logged(upperA, 3, [[50, 10, 8], [50, 10, 8.5], [50, 9, 9]]),
+    ...logged(upperA, 4, [[20, 12, 9], [20, 12, 9]]),
+  ] }],
+  ['w-lower-a', { id: 'w-lower-a', template_id: lowerA.id, performed_on: '2026-09-29', started_at: '2026-09-29T18:10:00', finished_at: '2026-09-29T19:05:00', duration_min: 55, notes: 'Squats moved well.', sets: [
+    ...logged(lowerA, 0, [[82.5, 6, 8], [82.5, 6, 8], [82.5, 6, 8.5], [82.5, 6, 9]]), ...logged(lowerA, 1, [[70, 8, 7], [70, 8, 7.5], [70, 8, 8]]),
+    ...logged(lowerA, 2, [[12, 10, 8], [12, 10, 8], [12, 10, 8.5]]), ...logged(lowerA, 3, [[60, 12, 9], [60, 12, 9], [60, 11, 9.5]]),
+  ] }],
+  ['w-today', { id: 'w-today', template_id: fullC.id, performed_on: TODAY, started_at: `${TODAY}T17:55:00`, finished_at: null, duration_min: null, notes: '', sets: [
+    ...logged(fullC, 0, [[82.5, 6, 8], [82.5, 6, 8.5], [82.5, 6, 9]]),
+  ] }],
+])
+
+const sessionName = (s: DemoSession) => templates.find((t) => t.id === s.template_id)?.name ?? OWN_WORKOUT
+
+function sessionSummary(s: DemoSession): WorkoutSummary {
+  return summarize(
+    { id: s.id, name: sessionName(s), performed_on: s.performed_on, finished: s.finished_at != null, duration_min: s.duration_min, notes: s.notes || null },
+    s.sets.map((x) => {
+      const e = exerciseById.get(x.exercise_id)
+      return { ...x, name: e?.name ?? 'Exercise', primary: e?.primary ?? [] }
+    }),
+  )
+}
+
+const openSession = () => [...sessions.values()].find((s) => !s.finished_at) ?? null
+
+function demoSession(id: string): DemoSession {
+  const s = sessions.get(id)
+  if (!s) throw new ApiError(404, "That workout doesn't exist.")
+  return s
+}
+
+/** Logged sets count once for each primary muscle of their exercise (as muscle_sets_for_week does). */
+function countSets(exerciseId: string, by: number) {
+  for (const m of exerciseById.get(exerciseId)?.primary ?? []) sets[m] = Math.max(0, sets[m] + by)
+}
+
 const muscleNotes: Partial<Record<MuscleGroup, MuscleDetail['note']>> = {
   glutes: { kind: 'research', text: 'About 10–20 hard sets a week suits most lifters for growth. You hit 10 this week.', source_url: 'https://pubmed.ncbi.nlm.nih.gov/27433992/' },
   lower_back: { kind: 'coach_tip', text: 'Keep RDLs light while your lower back settles. Back extensions with a pause are a good swap.' },
@@ -298,7 +390,7 @@ export const demo = {
       days,
       week: { workouts_done: done, workouts_planned: 4, meals_on_plan: 17, meals_planned: 20, avg_protein_g: 128 },
       check_in: { status: checkin.status, minutes: 4, next_date: null },
-      workout,
+      workout: { ...workout, sets_done: sessions.get('w-today')?.sets.length ?? workout.sets_done },
       food,
       habits: { ...habitsToday, weight_today: habitsToday.weight_today, steps_avg: 8450, water_ml_avg: 2100, sleep_avg: 6 + 50 / 60, note: 'Sleep dipped on Wednesday and Thursday.' },
       weight: {
@@ -315,7 +407,93 @@ export const demo = {
   },
 
   trainWeek(): TrainWeek {
-    return { today: TODAY, week: 6, weeks: 12, body_model: bodyModel, sets, workout, has_program: true }
+    const open = openSession()
+    const all = [...sessions.values()]
+    return {
+      today: TODAY, week: 6, weeks: 12, body_model: bodyModel, sets, has_program: true, units: 'metric',
+      plan: weekPlan(templates, all.map((s) => ({ id: s.id, workout_template_id: s.template_id, performed_on: s.performed_on, finished: s.finished_at != null })), TODAY, PROGRAM_START),
+      open_workout: open ? { id: open.id, name: sessionName(open), performed_on: open.performed_on, started_at: open.started_at, sets_done: open.sets.length } : null,
+      recent: all.filter((s) => s.finished_at).sort((a, b) => b.performed_on.localeCompare(a.performed_on)).slice(0, 5).map(sessionSummary),
+    }
+  },
+
+  // ----- workouts -----
+  exerciseLibrary(): LibraryExercise[] {
+    return exerciseLibrary
+  },
+
+  startWorkout(templateId: string | null) {
+    const open = openSession()
+    if (open) return { id: open.id }
+    const id = crypto.randomUUID()
+    sessions.set(id, { id, template_id: templateId, performed_on: TODAY, started_at: new Date().toISOString(), finished_at: null, duration_min: null, notes: '', sets: [] })
+    return { id }
+  },
+
+  workoutLog(id: string): WorkoutLog {
+    const s = demoSession(id)
+    return {
+      id: s.id, name: sessionName(s), template_id: s.template_id, performed_on: s.performed_on, started_at: s.started_at,
+      finished_at: s.finished_at, duration_min: s.duration_min, notes: s.notes, units: 'metric',
+      coach_notes: templates.find((t) => t.id === s.template_id)?.notes ?? null,
+      plan: templates.find((t) => t.id === s.template_id)?.exercises ?? [],
+      sets: s.sets.map((x) => ({ ...x })),
+    }
+  },
+
+  lastTime(sessionId: string, exerciseIds: string[]): Record<string, LastTime> {
+    const out: Record<string, LastTime> = {}
+    const before = [...sessions.values()].filter((s) => s.id !== sessionId).sort((a, b) => (b.started_at ?? '').localeCompare(a.started_at ?? ''))
+    for (const id of exerciseIds) {
+      const s = before.find((x) => x.sets.some((l) => l.exercise_id === id))
+      if (s) out[id] = { date: s.performed_on, sets: s.sets.filter((l) => l.exercise_id === id).map(({ set_number, weight_kg, reps, rpe }) => ({ set_number, weight_kg, reps, rpe })) }
+    }
+    return out
+  },
+
+  saveSet(sessionId: string, set: SetWrite) {
+    const s = demoSession(sessionId)
+    const i = s.sets.findIndex((x) => x.exercise_id === set.exercise_id && x.set_number === set.set_number)
+    if (i >= 0) s.sets[i] = { ...set }
+    else {
+      s.sets.push({ ...set })
+      if (s.performed_on >= WEEK_START) countSets(set.exercise_id, 1)
+    }
+    return { ok: true }
+  },
+
+  deleteSet(sessionId: string, exerciseId: string, setNumber: number) {
+    const s = demoSession(sessionId)
+    const before = s.sets.length
+    s.sets = s.sets.filter((x) => !(x.exercise_id === exerciseId && x.set_number === setNumber))
+    if (s.sets.length < before && s.performed_on >= WEEK_START) countSets(exerciseId, -1)
+    return { ok: true }
+  },
+
+  saveWorkoutNote(id: string, notes: string) {
+    demoSession(id).notes = notes.trim()
+    return { ok: true }
+  },
+
+  finishWorkout(id: string): WorkoutSummary {
+    const s = demoSession(id)
+    if (!s.finished_at) {
+      if (!s.sets.length) throw new ApiError(409, 'Tick at least one set first, or discard the workout.')
+      s.finished_at = new Date().toISOString()
+      s.duration_min = minutesSince(s.started_at)
+      const day = days.find((d) => d.date === s.performed_on)
+      if (day && s.template_id) day.workout = { name: sessionName(s), status: 'done' }
+    }
+    return sessionSummary(s)
+  },
+
+  discardWorkout(id: string) {
+    const s = demoSession(id)
+    if (!s.finished_at) {
+      for (const x of s.sets) countSets(x.exercise_id, -1)
+      sessions.delete(id)
+    }
+    return { ok: true }
   },
 
   setBodyModel(m: BodyModel) {
@@ -553,5 +731,11 @@ export const demo = {
   setTargets(clientId: string, t: Targets) {
     demoTargets[clientId] = { ...t }
     return { ok: true }
+  },
+
+  /** Only Aisha (the demo client) has a workout log. */
+  clientWorkouts(clientId: string): WorkoutSummary[] {
+    if (clientId !== aisha.id) return []
+    return [...sessions.values()].sort((a, b) => b.performed_on.localeCompare(a.performed_on) || (b.started_at ?? '').localeCompare(a.started_at ?? '')).map(sessionSummary)
   },
 }

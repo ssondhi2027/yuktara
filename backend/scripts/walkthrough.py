@@ -355,12 +355,181 @@ check(
     f"new targets start Monday {next_monday}",
 )
 
+step("Coach assigns a program; client logs today's workout (one swap, RPE) and one of their own; coach sees both")
+names = ["Back squat", "Goblet squat", "Romanian deadlift", "Push-up", "Lat pulldown"]
+ex = {
+    r["name"]: r["id"]
+    for r in client.get("exercises", select="id,name", name="in.(" + ",".join(f'"{n}"' for n in names) + ")")
+}
+check(len(ex) == len(names), "client sees the shared exercise library")
+dow = today.isoweekday() % 7  # Postgres numbering, Sunday = 0
+monday = (today - timedelta(days=today.weekday())).isoformat()
+program = coach.write(
+    "POST",
+    "programs",
+    {"coach_id": coach.id, "client_id": client.id, "name": "Walkthrough block", "start_date": str(today), "weeks": 8},
+).json()[0]
+template = coach.write(
+    "POST",
+    "workout_templates",
+    {"program_id": program["id"], "name": "Lower A", "day_of_week": dow, "notes": "Keep the RDLs light."},
+).json()[0]
+slots = coach.write(
+    "POST",
+    "template_exercises",
+    [
+        {
+            "workout_template_id": template["id"],
+            "exercise_id": ex["Back squat"],
+            "position": 0,
+            "target_sets": 3,
+            "target_reps": "6-8",
+            "target_rpe": 8,
+            "rest_seconds": 150,
+        },
+        {
+            "workout_template_id": template["id"],
+            "exercise_id": ex["Romanian deadlift"],
+            "position": 1,
+            "target_sets": 2,
+            "target_reps": "10",
+            "target_rpe": 7,
+            "rest_seconds": 120,
+        },
+    ],
+).json()
+squat_slot, rdl_slot = slots[0]["id"], slots[1]["id"]
+plan = client.get(
+    "programs",
+    select="id,workout_templates(id,name,day_of_week,template_exercises(id,target_sets,target_reps,target_rpe))",
+    client_id=f"eq.{client.id}",
+)
+check(
+    plan[0]["workout_templates"][0]["day_of_week"] == dow
+    and len(plan[0]["workout_templates"][0]["template_exercises"]) == 2,
+    "client sees today's planned workout with the coach's targets",
+)
+
+
+def start_session(template_id: str | None) -> httpx.Response:
+    return client.write(
+        "POST",
+        "workout_sessions",
+        {
+            "client_id": client.id,
+            "workout_template_id": template_id,
+            "performed_on": str(today),
+            "started_at": f"{today}T17:00:00Z",
+            "finished_at": None,
+            "status": "partial",
+        },
+    )
+
+
+def tick(session_id: str, exercise: str, n: int, reps: int, kg: float | None, rpe: float | None, slot=None) -> None:
+    r = client.write(
+        "POST",
+        "set_logs",
+        {
+            "session_id": session_id,
+            "exercise_id": ex[exercise],
+            "template_exercise_id": slot,
+            "set_number": n,
+            "reps": reps,
+            "weight_kg": kg,
+            "rpe": rpe,
+            "is_warmup": False,
+        },
+        prefer="resolution=merge-duplicates,return=minimal",
+        on_conflict="session_id,exercise_id,set_number",
+    )
+    check(r.status_code in (200, 201), f"set saved as it's ticked: {exercise} #{n} {reps} reps @ {kg} kg, RPE {rpe}")
+
+
+planned = start_session(template["id"]).json()[0]["id"]
+check(start_session(None).status_code == 409, "only one open workout at a time (a second start is refused)")
+tick(planned, "Goblet squat", 1, 10, 24, 7.5, slot=squat_slot)  # swapped for back squat, this session only
+tick(planned, "Goblet squat", 2, 10, 24, 8, slot=squat_slot)
+tick(planned, "Goblet squat", 2, 9, 24, 8.5, slot=squat_slot)  # edited after ticking
+tick(planned, "Romanian deadlift", 1, 10, 50, 7, slot=rdl_slot)
+sets_now = {
+    r["muscle"]: r["hard_sets"]
+    for r in client.rpc("muscle_sets_for_week", {"client": client.id, "week_start": monday}).json()
+}
+check(
+    sets_now.get("quads", 0) >= 2, f"body map counts the sets while the workout is open (quads {sets_now.get('quads')})"
+)
+r = client.write(
+    "PATCH",
+    "workout_sessions",
+    {
+        "finished_at": f"{today}T17:45:00Z",
+        "duration_min": 45,
+        "status": "done",
+        "notes": "Goblet squats today, gym was busy",
+    },
+    id=f"eq.{planned}",
+)
+check(r.status_code == 200 and r.json()[0]["status"] == "done", "Finish workout sets finished_at, duration and status")
+check(
+    client.get("template_exercises", select="exercise_id", id=f"eq.{squat_slot}")[0]["exercise_id"] == ex["Back squat"],
+    "the swap didn't change the coach's program",
+)
+
+own = start_session(None).json()[0]["id"]
+tick(own, "Push-up", 1, 15, None, None)  # bodyweight: no weight
+tick(own, "Push-up", 2, 12, None, 9)
+tick(own, "Lat pulldown", 1, 10, 40, 8)
+r = client.write(
+    "PATCH",
+    "workout_sessions",
+    {"finished_at": f"{today}T19:20:00Z", "duration_min": 20, "status": "done"},
+    id=f"eq.{own}",
+)
+check(r.status_code == 200, "client finishes an extra workout of their own")
+
+SESSION_SUMMARY_COLS = (
+    "id, performed_on, finished_at, duration_min, notes, workout_templates(name), set_logs(set_number, reps, weight_kg,"
+    " rpe, is_warmup, exercise_id, exercises(name, exercise_muscles(muscle, role)))"
+).replace(" ", "")
+seen = coach.get(
+    "workout_sessions", select=SESSION_SUMMARY_COLS, client_id=f"eq.{client.id}", order="performed_on.desc"
+)
+check(len(seen) == 2 and all(x["finished_at"] for x in seen), "coach sees both sessions")
+coach_planned = next(x for x in seen if x["id"] == planned)
+check(
+    coach_planned["workout_templates"]["name"] == "Lower A"
+    and {x["exercises"]["name"] for x in coach_planned["set_logs"]} == {"Goblet squat", "Romanian deadlift"}
+    and any(x["rpe"] == 8.5 for x in coach_planned["set_logs"]),
+    "coach sees the planned session with the swap and the RPE",
+)
+check(
+    next(x for x in seen if x["id"] == own)["workout_templates"] is None,
+    "coach sees the own workout (no template)",
+)
+r = coach.write("PATCH", "set_logs", {"reps": 1}, session_id=f"eq.{planned}")
+check(r.status_code == 200 and r.json() == [], "coach can't change the client's sets (0 rows)")
+r = coach.write("POST", "workout_sessions", {"client_id": client.id, "performed_on": str(today)})
+check(r.status_code >= 400, "coach can't log a workout for the client")
+done_this_week = coach.get(
+    "workout_sessions", select="status", client_id=f"eq.{client.id}", performed_on=f"gte.{monday}", status="eq.done"
+)
+check(len(done_this_week) == 2, "dashboard's 'done this week' count comes from the real logs")
+
 step("A second client (no invite code) can't see the first client; clients can't use coach endpoints")
 sign_up(other_email, "Other Client")
 confirm_via_mailpit(other_email)
 other = As(session(other_email))
 check(other.get("client_profiles", select="user_id,coach_id")[0]["coach_id"] is None, "no coach linked without a code")
-for table in ("client_profiles", "meal_logs", "daily_logs", "check_ins", "messages", "nutrition_targets"):
+for table in (
+    "client_profiles",
+    "meal_logs",
+    "daily_logs",
+    "check_ins",
+    "messages",
+    "nutrition_targets",
+    "workout_sessions",
+):
     rows = other.get(
         table,
         select="client_id" if table != "client_profiles" else "user_id",
@@ -370,6 +539,10 @@ for table in ("client_profiles", "meal_logs", "daily_logs", "check_ins", "messag
 check(other.api("GET", "/coach/invite-code").status_code == 403, "client is refused coach endpoints (403)")
 r = other.write("PATCH", "users", {"role": "coach"}, id=f"eq.{other.id}")
 check(r.status_code >= 400, "client can't make themselves a coach")
+check(
+    other.get("set_logs", select="id", session_id=f"eq.{planned}") == [],
+    "other client sees none of the first client's set_logs",
+)
 check(
     coach.get("client_profiles", select="user_id", user_id=f"eq.{other.id}") == [],
     "the coach doesn't see the other client",
@@ -383,13 +556,13 @@ PROFILE_COLS = (
     " date_of_birth, height_cm, experience, training_days, train_location, injuries, diet, foods_to_avoid,"
     " meals_per_day"
 ).replace(" ", "")
-monday = (today - timedelta(days=today.weekday())).isoformat()
 client_queries = [
     (
         "programs",
         {
-            "select": "id,name,start_date,weeks,workout_templates(id,name,day_of_week,position,"
-            "template_exercises(id,position,target_sets,target_reps,exercise_id,exercises(name)))",
+            "select": "id,name,start_date,weeks,workout_templates(id,name,day_of_week,position,notes,"
+            "template_exercises(id,position,target_sets,target_reps,target_rpe,rest_seconds,exercise_id,"
+            "exercises(name,cue)))",
             "client_id": f"eq.{client.id}",
             "start_date": f"lte.{today}",
         },
@@ -397,8 +570,8 @@ client_queries = [
     (
         "exercise_swaps",
         {
-            "select": "template_exercise_id,from_week,to_week,"
-            "to_exercise:exercises!exercise_swaps_to_exercise_id_fkey(name)"
+            "select": "template_exercise_id,from_week,to_week,to_exercise_id,"
+            "to_exercise:exercises!exercise_swaps_to_exercise_id_fkey(name,cue)"
         },
     ),
     (
@@ -429,6 +602,35 @@ client_queries = [
             "workout_sessions.performed_on": f"gte.{monday}",
         },
     ),
+    ("exercises", {"select": "id,name,level,equipment,cue,exercise_muscles(muscle,role)", "order": "name"}),
+    (
+        "workout_sessions",
+        {
+            "select": "id,workout_template_id,performed_on,started_at,workout_templates(name),set_logs(count)",
+            "client_id": f"eq.{client.id}",
+            "finished_at": "is.null",
+        },
+    ),
+    (
+        "workout_sessions",
+        {
+            "select": "id,workout_template_id,performed_on,started_at,finished_at,duration_min,notes,"
+            "workout_templates(name),set_logs(exercise_id,template_exercise_id,set_number,reps,weight_kg,rpe)",
+            "id": f"eq.{planned}",
+        },
+    ),
+    ("workout_sessions", {"select": SESSION_SUMMARY_COLS, "client_id": f"eq.{client.id}", "limit": "5"}),
+    (
+        "set_logs",
+        {
+            "select": "exercise_id,set_number,reps,weight_kg,rpe,session_id,"
+            "workout_sessions!inner(client_id,performed_on,started_at)",
+            "workout_sessions.client_id": f"eq.{client.id}",
+            "exercise_id": f"in.({ex['Back squat']},{ex['Goblet squat']})",
+            "session_id": f"neq.{own}",
+        },
+    ),
+    ("users", {"select": "id,full_name,unit_system", "id": f"eq.{client.id}"}),
     ("checkin_questions", {"select": "id,prompt,answer_type", "is_active": "eq.true", "order": "position"}),
     ("checkin_answers", {"select": "question_id,value_number,value_text", "check_in_id": f"eq.{ci}"}),
     ("progress_photos", {"select": "pose,photo_url", "check_in_id": f"eq.{ci}"}),

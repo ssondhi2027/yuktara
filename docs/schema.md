@@ -13,7 +13,7 @@ The migrations in `supabase/migrations` implement the "Database schema" artboard
 ## Access rules
 
 - **Clients:** read and write their own rows only.
-- **Coaches:** read and write rows for clients whose `client_profiles.coach_id` is theirs. Adding coaches later needs no schema change.
+- **Coaches:** read and write rows for clients whose `client_profiles.coach_id` is theirs. Adding coaches later needs no schema change. Exception: workout logs (`workout_sessions`, `set_logs`) are read-only for the coach since 0013.
 - **Private coach notes:** `client_profiles.coach_notes` is hidden with column grants. Coaches use `get_coach_notes(client)` and `set_coach_notes(client, notes)`. This means `select *` on `client_profiles` fails, so always name the columns.
 - **Check-ins:** clients can edit until the coach reviews. Only the coach can set `status = 'reviewed'`. The `check_ins_guard` trigger enforces both.
 - **Photos:** stored in the private buckets `progress-photos` and `meal-photos`. Object paths start with the client's id. Clients upload and delete their own; the coach can read them.
@@ -59,6 +59,18 @@ The app's route guard (`RequireAuth` in `frontend/src/app/auth.tsx`) is only a c
 
    `<CODE>` is the invite code clients will type, 4–20 letters, digits or dashes (for example `NAME-7Q4K`). The coach can replace it later from the app (`POST /coach/invite-code`).
 3. Log out and log in again: the coach app opens.
+
+## Workout logging (0013_workout_logging.sql)
+
+The Train tab logs workouts straight into `workout_sessions` and `set_logs`, as the client.
+
+- **Open sessions.** "Start workout" inserts a session with `finished_at` null and `status = 'partial'`. A unique index allows one open session per client, so starting again resumes it. "Finish workout" sets `finished_at`, `duration_min` (null if it was left open over 10 hours) and `status = 'done'`. `finished_at` defaults to `now()`, so rows written any other way count as finished.
+- **Sets save one by one.** Each ticked set is upserted on `(session_id, exercise_id, set_number)`; unticking deletes it. Weight is stored in kg (`weight_kg`) and shown in the client's `users.unit_system`.
+- **Checks.** Reps 0–100, weight 0–1000 kg, RPE 1–10 in steps of 0.5, set number 1–50. Weight may be null (bodyweight exercises).
+- **Swaps for one session.** `set_logs.template_exercise_id` records which planned slot a set was logged against. When its `exercise_id` differs from the slot's, the client swapped it for that session only; the program (and `exercise_swaps`) is unchanged. Null means an exercise the client added.
+- **Body map.** Ticked sets count as hard sets straight away (open sessions are `partial`, which `muscle_sets_for_week` and `muscle_week_sets` include), once per primary muscle, warm-ups excluded.
+- **"Done" workouts.** The apps count distinct planned workouts with a finished session this week, so an extra workout doesn't make up for a missed one. The nightly `weekly_summaries` view still counts every finished session (capped at 100%).
+- **Access.** The client inserts, updates and deletes only their own sessions and sets, with a template from their own program and an exercise they can see. Their coach can read them; no one else can see them.
 
 ## Live data (0012_live_data.sql)
 

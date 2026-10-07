@@ -2,11 +2,12 @@
 // Every query runs as the signed-in user, so RLS decides what comes back.
 
 import type { PostgrestError } from '@supabase/supabase-js'
-import type { MealType } from '@/types/db'
-import type { CoachNote, Person, Targets } from '../api'
+import type { MealType, MuscleGroup } from '@/types/db'
+import type { CoachNote, Person, Targets, WorkoutSummary } from '../api'
 import { ApiError } from '../backend'
 import { addDays, monthDay, parseDate, toISODate, weekStart } from '../dates'
 import { supabase } from '../supabase'
+import { OWN_WORKOUT, summarize, type SummarySet } from '../workouts'
 
 export const db = () => {
   if (!supabase) throw new Error('Supabase is not configured')
@@ -146,3 +147,42 @@ export async function lastCoachMessage(client: string, coach: Person | null): Pr
 
 export const avg = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null)
 export const round1 = (x: number) => Math.round(x * 10) / 10
+
+// ---------- Workouts ----------
+
+/** Columns for a session plus its sets, enough for summarize(). */
+export const SESSION_SUMMARY_COLS =
+  'id, performed_on, finished_at, duration_min, notes, workout_templates(name), set_logs(set_number, reps, weight_kg, rpe, is_warmup, exercise_id, exercises(name, exercise_muscles(muscle, role)))'
+
+const numOrNull = (x: unknown) => (x == null ? null : Number(x))
+
+/** A workout_sessions row selected with SESSION_SUMMARY_COLS → WorkoutSummary. */
+export function sessionSummary(row: any): WorkoutSummary {
+  const sets: SummarySet[] = (row.set_logs ?? [])
+    .filter((l: any) => !l.is_warmup)
+    .map((l: any) => ({
+      exercise_id: l.exercise_id,
+      name: l.exercises?.name ?? 'Exercise',
+      primary: (l.exercises?.exercise_muscles ?? []).filter((m: any) => m.role === 'primary').map((m: any) => m.muscle as MuscleGroup),
+      set_number: l.set_number,
+      reps: l.reps,
+      weight_kg: numOrNull(l.weight_kg),
+      rpe: numOrNull(l.rpe),
+    }))
+  return summarize({
+    id: row.id,
+    name: row.workout_templates?.name ?? OWN_WORKOUT,
+    performed_on: row.performed_on,
+    finished: row.finished_at != null,
+    duration_min: row.duration_min,
+    notes: row.notes,
+  }, sets)
+}
+
+/** A client's workouts, newest first (as that client, or as their coach). */
+export async function sessionSummaries(client: string, limit: number, finishedOnly = true): Promise<WorkoutSummary[]> {
+  let q = db().from('workout_sessions').select(SESSION_SUMMARY_COLS).eq('client_id', client)
+  if (finishedOnly) q = q.not('finished_at', 'is', null)
+  const rows = must(await q.order('performed_on', { ascending: false }).order('started_at', { ascending: false }).limit(limit))
+  return (rows as any[]).map(sessionSummary)
+}

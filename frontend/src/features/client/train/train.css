@@ -82,3 +82,19 @@
 .ex-cue { margin-top: 6px; color: var(--ink-2); }
 .model-credit { padding: 0 6px; }
 .model-credit a { color: inherit; }
+
+/* Today card actions */
+.today-bar .today-own { border-color: var(--on-forest-2); color: var(--gold); }
+.today-error { color: var(--gold); margin-top: 4px; }
+
+/* This week's workouts and recent sessions */
+.workout-week { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+@media (min-width: 1000px) { .workout-week { grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); align-items: start; } }
+.train-wide { grid-column: 1 / -1; }
+.plan-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.plan-item { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 14px; background: var(--surface-2); border: 1px solid transparent; }
+.plan-item.now { border-color: var(--gold); }
+.plan-item .pill { display: inline-flex; align-items: center; gap: 4px; flex: none; }
+.plan-day { width: 34px; flex: none; font-weight: 700; color: var(--ink-2); font-size: 13px; }
+.plan-item .truncate { display: block; }
+.recent-row { display: flex; align-items: center; gap: 10px; color: inherit; text-decoration: none; }

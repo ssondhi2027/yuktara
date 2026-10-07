@@ -85,8 +85,8 @@ Errors always look like `{"error": {"code", "message"}, "request_id"}`. Validati
 ## Which calls go where
 
 - **Direct to Supabase** (one table, as the signed-in user, RLS):
-  - **Client:** reading every screen, logging meals (`meal_logs`), habits and the day rating (`daily_logs`), saving the check-in draft (`check_ins`), and the body model.
-  - **Coach:** the dashboard, check-in lists and review screens; first targets (`nutrition_targets`); review drafts (`review_drafts`); private notes (`set_coach_notes`).
+  - **Client:** reading every screen, logging meals (`meal_logs`), habits and the day rating (`daily_logs`), saving the check-in draft (`check_ins`), the body model, and workouts (`workout_sessions`, `set_logs`: start, save each set as it's ticked, finish, discard).
+  - **Coach:** the dashboard, check-in lists and review screens; first targets (`nutrition_targets`); review drafts (`review_drafts`); private notes (`set_coach_notes`); a client's logged workouts, read-only (client sheet).
 - **Through this API** (several tables at once): submitting a check-in, reviewing one, exercise swaps, photo upload links, invite codes.
 - **Coach freshness:**
   - Coach screens refetch every 30 s and when the window regains focus (`COACH_REFRESH` in `frontend/src/lib/api.ts`).
