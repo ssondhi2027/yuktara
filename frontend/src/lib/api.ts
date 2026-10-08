@@ -17,6 +17,7 @@ import { backend } from './backend'
 import { demo } from './demo'
 import { liveClient } from './live/client'
 import { liveCoach } from './live/coach'
+import { liveMessages } from './live/messages'
 import { isDemo } from './supabase'
 
 export { ApiError } from './backend'
@@ -254,6 +255,55 @@ export interface ClientProgress {
   coach_note: CoachNote | null
 }
 
+// ---------- Messages ----------
+// One conversation per client (messages.client_id): the client and their coach.
+export interface ChatMessage {
+  id: string
+  body: string
+  created_at: string
+  from_me: boolean
+  sender: Person
+  /** set when the message is check-in feedback (sent with a review) */
+  check_in: { id: string; week_start: string } | null
+  read_at: string | null
+}
+
+export interface MessageThread {
+  client: Person
+  /** who the signed-in user is talking to: the coach (client app) or the client (coach app); null without a coach */
+  other: Person | null
+  /** oldest first */
+  messages: ChatMessage[]
+  can_send: boolean
+}
+
+/** A row in the coach's conversation list. */
+export interface Conversation {
+  client: Person
+  last: { body: string; created_at: string; from_me: boolean; feedback: boolean } | null
+  /** the client's messages the coach hasn't read */
+  unread: number
+}
+
+/** A past check-in as the client sent it, with the coach's feedback (read-only). */
+export interface CheckinSummary {
+  id: string
+  week_start: string
+  status: CheckinStatus
+  submitted_at: string | null
+  avg_weight_kg: number | null
+  waist_cm: number | null
+  hips_cm: number | null
+  energy: number | null
+  sleep: number | null
+  stress: number | null
+  hunger: number | null
+  wins: string | null
+  struggles: string | null
+  question: string | null
+  feedback: ChatMessage[]
+}
+
 // ---------- Coach ----------
 export type ClientWeekStatus = 'on_track' | 'slipping' | 'overdue' | 'awaiting'
 
@@ -439,6 +489,18 @@ export const api = {
   clientDetail: (clientId: string): Promise<ClientDetail> => (isDemo ? wait(demo.clientDetail(clientId)) : liveCoach.clientDetail(clientId)),
   /** The coach sets targets that apply from today. */
   setTargets: (clientId: string, targets: Targets) => (isDemo ? wait(demo.setTargets(clientId, targets)) : liveCoach.setTargets(clientId, targets)),
+  // messages (both apps; plain messages go straight to Supabase, RLS + a rate-limit trigger, 0014)
+  /** clientId null = the signed-in client's own conversation with their coach */
+  messageThread: (clientId: string | null): Promise<MessageThread> =>
+    isDemo ? wait(demo.messageThread(clientId)) : liveMessages.thread(clientId),
+  sendMessage: (clientId: string | null, body: string): Promise<ChatMessage> =>
+    isDemo ? wait(demo.sendMessage(clientId, body)) : liveMessages.send(clientId, body),
+  /** Marks the other side's messages in this conversation read. */
+  markThreadRead: (clientId: string | null) => (isDemo ? wait(demo.markThreadRead(clientId)) : liveMessages.markRead(clientId)),
+  unreadMessages: (): Promise<number> => (isDemo ? wait(demo.unreadMessages()) : liveMessages.unreadCount()),
+  conversations: (): Promise<Conversation[]> => (isDemo ? wait(demo.conversations()) : liveMessages.conversations()),
+  checkinSummary: (id: string): Promise<CheckinSummary> => (isDemo ? wait(demo.checkinSummary(id)) : liveMessages.checkinSummary(id)),
+
   /** A client's logged workouts, newest first (read-only for the coach). */
   clientWorkouts: (clientId: string): Promise<WorkoutSummary[]> =>
     isDemo ? wait(demo.clientWorkouts(clientId)) : liveCoach.clientWorkouts(clientId),
@@ -457,3 +519,11 @@ export type Api = typeof api
  * for coaching. Client screens refresh from their own writes instead.
  */
 export const COACH_REFRESH = { refetchInterval: 30_000, refetchOnWindowFocus: true } as const
+
+/**
+ * Messages poll instead of using Realtime (reasons in docs/api.md): an open
+ * conversation every 5 s, the conversation list and unread badges every 15 s.
+ * React Query pauses both while the tab is hidden and refetches on focus.
+ */
+export const THREAD_REFRESH = { refetchInterval: 5_000, refetchOnWindowFocus: true } as const
+export const UNREAD_REFRESH = { refetchInterval: 15_000, refetchOnWindowFocus: true } as const

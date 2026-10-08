@@ -5,7 +5,8 @@
 import type { BodyModel, ExerciseLevel, MealType, MuscleGroup, OnPlan } from '@/types/db'
 import type {
   CheckinDraft, CheckinLists, CheckinReview, ClientDetail, ClientHome, ClientProgress, ClientRow,
-  CoachDashboard, CoachNote, DailyPatch, DaySummary, FoodDay, LastTime, LibraryExercise, Meal, MuscleDetail, Person,
+  ChatMessage, CheckinSummary, CoachDashboard, CoachNote, Conversation, DailyPatch, DaySummary, FoodDay, LastTime,
+  LibraryExercise, Meal, MessageThread, MuscleDetail, Person,
   PlannedExercise, QueueItem, SetWrite, Targets, TodayWorkout, TrainWeek, WorkoutLog, WorkoutSummary,
 } from './api'
 import type { GoalType } from '@/types/db'
@@ -376,6 +377,36 @@ function reviewFor(r: Roster) {
   return reviewState.get(id)!
 }
 
+// ---------- Messages ----------
+// Aisha's conversation with the coach (with last week's check-in feedback),
+// plus short threads with Priya (2 unread) and Marco.
+interface DemoMessage { id: string; client_id: string; sender_id: string; body: string; created_at: string; check_in_id: string | null; read_at: string | null }
+
+const PREV_CHECK_IN = { id: 'ci-aisha-w5', week_start: '2026-09-21' }
+const messages: DemoMessage[] = [
+  { id: 'msg-1', client_id: aisha.id, sender_id: coach.id, body: coachNote.body, created_at: '2026-09-27T19:10:00', check_in_id: PREV_CHECK_IN.id, read_at: '2026-09-27T20:02:00' },
+  { id: 'msg-2', client_id: aisha.id, sender_id: aisha.id, body: "Late one at work again. OK if I do Thursday's session on Friday morning instead?", created_at: '2026-09-30T21:05:00', check_in_id: null, read_at: '2026-10-01T07:31:00' },
+  { id: 'msg-3', client_id: aisha.id, sender_id: coach.id, body: 'Totally fine. Keep the RDLs light on Friday, and try to get to bed a bit earlier tonight.', created_at: '2026-10-01T07:40:00', check_in_id: null, read_at: '2026-10-01T08:15:00' },
+  { id: 'msg-4', client_id: aisha.id, sender_id: aisha.id, body: "Check-in sent! There's a question in there about hip thrusts.", created_at: `${TODAY}T18:41:00`, check_in_id: null, read_at: `${TODAY}T18:50:00` },
+  { id: 'msg-5', client_id: aisha.id, sender_id: coach.id, body: "Got it, I'll review it tonight.", created_at: `${TODAY}T18:52:00`, check_in_id: null, read_at: null },
+  { id: 'msg-6', client_id: 'c-marco', sender_id: coach.id, body: 'Nice deadlift PR this week!', created_at: '2026-10-02T09:00:00', check_in_id: null, read_at: '2026-10-02T12:28:00' },
+  { id: 'msg-7', client_id: 'c-marco', sender_id: 'c-marco', body: 'Thanks! It felt smooth.', created_at: '2026-10-02T12:30:00', check_in_id: null, read_at: '2026-10-02T13:00:00' },
+  { id: 'msg-8', client_id: 'c-priya', sender_id: 'c-priya', body: 'Sorry, rough week with work travel. Back on track Monday.', created_at: '2026-10-03T21:20:00', check_in_id: null, read_at: null },
+  { id: 'msg-9', client_id: 'c-priya', sender_id: 'c-priya', body: 'Can we keep the same targets for one more week?', created_at: '2026-10-03T21:22:00', check_in_id: null, read_at: null },
+]
+
+const isCoach = () => getCurrentUser()?.role === 'coach'
+const everyone = () => [coach, aisha, ...roster.map((r) => r.client)]
+
+function demoChat(m: DemoMessage, me: string): ChatMessage {
+  const sender = m.sender_id === aisha.id && !isCoach() ? signedIn() ?? aisha : everyone().find((p) => p.id === m.sender_id) ?? coach
+  const ci = m.check_in_id === PREV_CHECK_IN.id ? PREV_CHECK_IN : m.check_in_id ? { id: m.check_in_id, week_start: WEEK_START } : null
+  return { id: m.id, body: m.body, created_at: m.created_at, from_me: m.sender_id === me, sender, check_in: ci, read_at: m.read_at }
+}
+
+/** In the client app the demo conversation is Aisha's; in the coach app, the chosen client's. */
+const demoThreadOf = (clientId: string | null) => ({ client: clientId ?? aisha.id, me: clientId ? coach.id : aisha.id })
+
 // ---------- Exported demo API ----------
 export const demo = {
   clientHome(): ClientHome {
@@ -731,6 +762,76 @@ export const demo = {
   setTargets(clientId: string, t: Targets) {
     demoTargets[clientId] = { ...t }
     return { ok: true }
+  },
+
+  // ----- messages -----
+  messageThread(clientId: string | null): MessageThread {
+    const t = demoThreadOf(clientId)
+    const client = clientId ? everyone().find((p) => p.id === clientId) ?? aisha : signedIn() ?? aisha
+    return {
+      client,
+      other: clientId ? client : coach,
+      messages: messages.filter((m) => m.client_id === t.client).sort((a, b) => a.created_at.localeCompare(b.created_at)).map((m) => demoChat(m, t.me)),
+      can_send: true,
+    }
+  },
+
+  sendMessage(clientId: string | null, body: string): ChatMessage {
+    const text = body.trim()
+    if (!text) throw new ApiError(422, 'Write a message first.')
+    if (text.length > 2000) throw new ApiError(422, 'Messages can be up to 2,000 characters.')
+    const t = demoThreadOf(clientId)
+    const m: DemoMessage = { id: crypto.randomUUID(), client_id: t.client, sender_id: t.me, body: text, created_at: new Date().toISOString(), check_in_id: null, read_at: null }
+    messages.push(m)
+    return demoChat(m, t.me)
+  },
+
+  markThreadRead(clientId: string | null) {
+    const t = demoThreadOf(clientId)
+    const now = new Date().toISOString()
+    for (const m of messages) if (m.client_id === t.client && m.sender_id !== t.me && !m.read_at) m.read_at = now
+    return { ok: true }
+  },
+
+  unreadMessages(): number {
+    return isCoach()
+      ? messages.filter((m) => m.sender_id === m.client_id && !m.read_at).length
+      : messages.filter((m) => m.client_id === aisha.id && m.sender_id !== aisha.id && !m.read_at).length
+  },
+
+  conversations(): Conversation[] {
+    return roster
+      .map((r): Conversation => {
+        const thread = messages.filter((m) => m.client_id === r.client.id).sort((a, b) => a.created_at.localeCompare(b.created_at))
+        const last = thread.at(-1)
+        return {
+          client: r.client,
+          last: last ? { body: last.body, created_at: last.created_at, from_me: last.sender_id === coach.id, feedback: !!last.check_in_id } : null,
+          unread: thread.filter((m) => m.sender_id === r.client.id && !m.read_at).length,
+        }
+      })
+      .sort((a, b) => (b.last?.created_at ?? '').localeCompare(a.last?.created_at ?? '') || a.client.full_name.localeCompare(b.client.full_name))
+  },
+
+  checkinSummary(id: string): CheckinSummary {
+    const prev = id === PREV_CHECK_IN.id
+    return {
+      id,
+      week_start: prev ? PREV_CHECK_IN.week_start : checkin.week_start,
+      status: prev ? 'reviewed' : checkin.status,
+      submitted_at: prev ? '2026-09-27T17:45:00' : `${TODAY}T18:40:00`,
+      avg_weight_kg: prev ? 72.2 : checkin.weight_kg,
+      waist_cm: prev ? 79 : checkin.waist_cm,
+      hips_cm: prev ? 98 : checkin.hips_cm,
+      energy: prev ? 4 : checkin.energy,
+      sleep: prev ? 4 : checkin.sleep,
+      stress: prev ? 2 : checkin.stress,
+      hunger: prev ? 3 : checkin.hunger,
+      wins: prev ? 'Hit protein every day and all four sessions.' : checkin.wins,
+      struggles: prev ? 'Weekend snacking.' : checkin.struggles,
+      question: prev ? null : checkin.question,
+      feedback: messages.filter((m) => m.check_in_id === id).map((m) => demoChat(m, aisha.id)),
+    }
   },
 
   /** Only Aisha (the demo client) has a workout log. */

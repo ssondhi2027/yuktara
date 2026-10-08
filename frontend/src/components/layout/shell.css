@@ -100,3 +100,8 @@
 .menu-who { display: flex; flex-direction: column; gap: 2px; min-width: 0; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
 .menu-item { display: flex; align-items: center; gap: 8px; }
 .menu-wrap > button.avatar.sm { width: 36px; height: 36px; font-size: 13px; }
+
+/* Unread messages: a dot on the icon (rail, phone), the count on desktop. */
+.side-icon { position: relative; display: inline-grid; place-items: center; }
+.unread-dot { position: absolute; top: -3px; right: -6px; width: 9px; height: 9px; border-radius: 50%; background: var(--orange); border: 2px solid var(--bg); }
+.dark-side .unread-dot { border-color: var(--side-dark); }

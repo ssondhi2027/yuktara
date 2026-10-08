@@ -60,6 +60,15 @@ The app's route guard (`RequireAuth` in `frontend/src/app/auth.tsx`) is only a c
    `<CODE>` is the invite code clients will type, 4–20 letters, digits or dashes (for example `NAME-7Q4K`). The coach can replace it later from the app (`POST /coach/invite-code`).
 3. Log out and log in again: the coach app opens.
 
+## Messaging (0014_messaging.sql)
+
+- **One conversation per client.** Every message with the same `client_id`; its members are the client and their current coach (`can_see_client`). Check-in feedback from `POST /checkins/{id}/review` is a message with `check_in_id` set, in the same conversation.
+- **Sending (RLS).** `sender_id` must be the caller and `read_at` empty. A client writes only into their own conversation, and only once they have a coach; a coach only into their clients' conversations. Only the coach may attach a `check_in_id`, and only for that client's check-in. Chat messages are capped at 2000 characters (feedback keeps the table's 5000).
+- **Read state.** Only the recipient sets `read_at`: the client on messages others wrote in their conversation, the coach on messages the client wrote. `read_at` is the only updatable column (0007), and no one can delete a message.
+- **Rate limit.** The `messages_rate_limit` trigger refuses a sender's 11th message in a minute or 61st in 10 minutes with SQLSTATE `PT429` (HTTP 429).
+- **Reads.** `message_threads()` lists the coach's clients with their latest message and the client messages the coach hasn't read; `unread_message_count()` is the nav badge. Both are security invoker, so RLS applies.
+- **Indexes.** `messages_sender_idx (sender_id, created_at desc)` for the rate limit, `messages_unread_idx (client_id, sender_id) where read_at is null` for unread counts. The latest message per client uses `messages_thread_idx` from 0005.
+
 ## Workout logging (0013_workout_logging.sql)
 
 The Train tab logs workouts straight into `workout_sessions` and `set_logs`, as the client.

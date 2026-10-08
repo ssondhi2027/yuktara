@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Link } from 'react-router'
-import { useQuery } from '@tanstack/react-query'
-import { Camera, Check, ClipboardCheck, Droplet, Footprints, Moon, Plus, Scale, Send, Sparkles, X } from 'lucide-react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Camera, Check, ClipboardCheck, Droplet, Footprints, MessageSquare, Moon, Plus, Scale, Send, Sparkles, X } from 'lucide-react'
 import { api, type ClientHome } from '@/lib/api'
 import { useLayout } from '@/app/hooks'
 import { greeting, longDay, monthDay, shortDay, weekday, parseDate, weekRange } from '@/lib/dates'
@@ -11,6 +11,7 @@ import { LineChart } from '@/components/charts/LineChart'
 import { MacroBar } from '@/components/ui/MacroBar'
 import { PageError, PageLoading } from '@/components/ui/Loading'
 import { ProfileMenu } from '@/components/layout/ProfileMenu'
+import { useUnreadMessages } from '@/features/messages/useUnreadMessages'
 import { HabitSheet } from './HabitSheet'
 import './home.css'
 
@@ -39,6 +40,7 @@ export function ClientHomePage() {
         </div>
         {phone ? (
           <div className="row">
+            <MessagesButton />
             <ProfileMenu />
           </div>
         ) : (
@@ -368,6 +370,7 @@ function CoachNoteCard({ h, desktop }: { h: ClientHome; desktop: boolean }) {
               <b>{h.coach.first_name}, your coach</b>
             </div>
             <p className="small muted">Feedback on your check-ins will show up here.</p>
+            <Link to="/messages" className="btn btn-outline btn-square" style={{ alignSelf: 'flex-start' }}>Message {h.coach.first_name}</Link>
           </>
         ) : (
           <>
@@ -389,17 +392,47 @@ function CoachNoteCard({ h, desktop }: { h: ClientHome; desktop: boolean }) {
       </div>
       <p className="coach-body">{n.body}</p>
       {desktop ? (
-        <form className="reply" onSubmit={(e) => e.preventDefault()}>
-          <label className="small muted" htmlFor="reply">Message {n.coach.first_name}</label>
-          <div className="row" style={{ gap: 8 }}>
-            <input id="reply" className="input dark-input" placeholder="Messaging is coming soon" disabled />
-            <button className="btn btn-gold btn-square" style={{ width: 44, padding: 0 }} aria-label="Send" disabled><Send size={18} /></button>
-          </div>
-        </form>
+        <QuickReply coachName={n.coach.first_name} />
       ) : (
         <Link to="/messages" className="btn btn-outline btn-square" style={{ alignSelf: 'flex-start' }}>Reply</Link>
       )}
     </section>
+  )
+}
+
+/** Phone header: Messages, with a dot while something is unread. */
+function MessagesButton() {
+  const unread = useUnreadMessages()
+  return (
+    <Link to="/messages" className="icon-btn" style={{ position: 'relative' }} aria-label={unread ? `Messages, ${unread} unread` : 'Messages'}>
+      <MessageSquare size={20} />
+      {unread > 0 && <span className="unread-dot" style={{ top: 6, right: 6 }} />}
+    </Link>
+  )
+}
+
+/** Desktop coach card: send a message without leaving Home. */
+function QuickReply({ coachName }: { coachName: string }) {
+  const qc = useQueryClient()
+  const [text, setText] = useState('')
+  const send = useMutation({
+    mutationFn: (body: string) => api.sendMessage(null, body),
+    onSuccess: () => {
+      setText('')
+      qc.invalidateQueries({ queryKey: ['thread', 'me'] })
+    },
+  })
+  return (
+    <form className="reply" onSubmit={(e) => { e.preventDefault(); if (text.trim()) send.mutate(text) }}>
+      <label className="small muted" htmlFor="reply">Message {coachName}</label>
+      <div className="row" style={{ gap: 8 }}>
+        <input id="reply" className="input dark-input" maxLength={2000} placeholder="Write a message" value={text}
+          disabled={send.isPending} onChange={(e) => { setText(e.target.value); send.reset() }} />
+        <button className="btn btn-gold btn-square" style={{ width: 44, padding: 0 }} aria-label="Send" disabled={send.isPending || !text.trim()}><Send size={18} /></button>
+      </div>
+      {send.isSuccess && <span className="xs muted">Sent. <Link to="/messages" style={{ color: 'inherit' }}>Open the conversation</Link></span>}
+      {send.error && <span role="alert" className="xs" style={{ color: 'var(--gold)' }}>{send.error.message}</span>}
+    </form>
   )
 }
 

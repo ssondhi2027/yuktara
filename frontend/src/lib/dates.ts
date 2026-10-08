@@ -58,3 +58,6 @@ let pinned: string | null = null
 export const pinToday = (iso: string) => { pinned = iso }
 /** The local date ('YYYY-MM-DD'). */
 export const today = () => pinned ?? toISODate(new Date())
+
+/** Local calendar date (YYYY-MM-DD) of a timestamp. */
+export const localDay = (ts: string) => toISODate(new Date(ts))

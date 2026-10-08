@@ -6,6 +6,9 @@ import { PageLoading } from '@/components/ui/Loading'
 import { ClientHomePage } from '@/features/client/home/HomePage'
 import { FoodPage } from '@/features/client/food/FoodPage'
 import { CheckinPage } from '@/features/client/checkin/CheckinPage'
+import { CheckinSummaryPage } from '@/features/client/checkin/CheckinSummaryPage'
+import { MessagesPage } from '@/features/client/messages/MessagesPage'
+import { CoachMessagesPage } from '@/features/coach/messages/CoachMessagesPage'
 import { ProgressPage } from '@/features/client/progress/ProgressPage'
 import { CoachDashboardPage } from '@/features/coach/dashboard/DashboardPage'
 import { CheckinsPage } from '@/features/coach/review/CheckinsPage'
@@ -29,8 +32,9 @@ export const router = createBrowserRouter([
       { path: 'train/workout/:id', element: <Suspense fallback={<PageLoading />}><WorkoutPage /></Suspense> },
       { path: 'food', element: <FoodPage /> },
       { path: 'check-in', element: <CheckinPage /> },
+      { path: 'check-in/:id', element: <CheckinSummaryPage /> },
       { path: 'progress', element: <ProgressPage /> },
-      { path: 'messages', element: <ComingSoon title="Messages" text="Chat with your coach. Check-in feedback threads land here too." /> },
+      { path: 'messages', element: <MessagesPage /> },
     ],
   },
   {
@@ -43,7 +47,8 @@ export const router = createBrowserRouter([
       { path: 'clients', element: <ComingSoon title="Clients" text="Every client, their program, targets and history." /> },
       { path: 'programs', element: <ComingSoon title="Programs" text="Build templates and assign workouts week by week." /> },
       { path: 'nutrition', element: <ComingSoon title="Nutrition plans" text="Calorie and macro targets, versioned by start date." /> },
-      { path: 'messages', element: <ComingSoon title="Messages" text="Conversations with your clients." /> },
+      { path: 'messages', element: <CoachMessagesPage /> },
+      { path: 'messages/:clientId', element: <CoachMessagesPage /> },
       { path: 'settings', element: <ComingSoon title="Settings" text="Check-in questions, reminders and your profile." /> },
     ],
   },

@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router'
+import { MessageSquare } from 'lucide-react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, type Targets } from '@/lib/api'
 import { monthDay } from '@/lib/dates'
@@ -54,6 +56,9 @@ export function ClientSheet({ clientId, onClose }: { clientId: string; onClose: 
 
   return (
     <Sheet title={c.client.full_name} onClose={onClose}>
+      <Link to={`/coach/messages/${clientId}`} className="btn btn-ghost btn-sm" style={{ alignSelf: 'flex-start' }}>
+        <MessageSquare size={16} /> Message {c.client.first_name}
+      </Link>
       {!c.setup_done && <div className="auth-note ok">Signed up, but hasn't finished profile setup yet.</div>}
       <dl className="answers-list">
         {rows.filter(([, v]) => v).map(([k, v]) => (

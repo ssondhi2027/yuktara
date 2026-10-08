@@ -2,6 +2,7 @@ import { NavLink, Outlet } from 'react-router'
 import { useQuery } from '@tanstack/react-query'
 import { ClipboardCheck, Dumbbell, House, MessageSquare, Salad, TrendingUp } from 'lucide-react'
 import { api } from '@/lib/api'
+import { useUnreadMessages } from '@/features/messages/useUnreadMessages'
 import { LogoMark, Wordmark } from '@/components/ui/Logo'
 import { ProfileMenu } from './ProfileMenu'
 import './shell.css'
@@ -25,6 +26,7 @@ export function ClientShell() {
   const due = data?.check_in.status === 'due'
   const me = data?.me
   const coach = data?.coach
+  const unread = useUnreadMessages()
 
   return (
     <div className="shell client-shell">
@@ -42,9 +44,14 @@ export function ClientShell() {
               {'due' in rest && due && <span className="pill warn xs only-desktop">Due</span>}
             </NavLink>
           ))}
-          <NavLink to="/messages" className="side-link only-desktop">
-            <MessageSquare size={20} strokeWidth={1.8} />
-            <span>Messages</span>
+          <NavLink to="/messages" className="side-link" aria-label={unread ? `Messages, ${unread} unread` : undefined}>
+            <span className="side-icon">
+              <MessageSquare size={20} strokeWidth={1.8} />
+              {unread > 0 && <span className="unread-dot hide-desktop" />}
+            </span>
+            <span className="hide-desktop">Messages</span>
+            <span className="only-desktop grow">Messages</span>
+            {unread > 0 && <span className="badge only-desktop">{unread}</span>}
           </NavLink>
         </nav>
         <div className="side-foot">

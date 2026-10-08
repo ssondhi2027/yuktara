@@ -148,6 +148,7 @@ PG_ERRORS: dict[str, tuple[int, str, str]] = {
     "23502": (422, "invalid_value", "A required value is missing."),
     "22P02": (422, "invalid_value", "A value has the wrong format."),
     "57014": (503, "timeout", "The database took too long. Try again."),
+    "PT429": (429, "rate_limited", "Too many messages. Wait a minute and try again."),  # messages_rate_limit (0014)
 }
 
 

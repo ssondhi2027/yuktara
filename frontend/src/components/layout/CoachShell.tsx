@@ -2,6 +2,7 @@ import { NavLink, Outlet } from 'react-router'
 import { useQuery } from '@tanstack/react-query'
 import { ClipboardCheck, Dumbbell, LayoutGrid, MessageSquare, Salad, Settings, SlidersHorizontal, Users } from 'lucide-react'
 import { api } from '@/lib/api'
+import { useUnreadMessages } from '@/features/messages/useUnreadMessages'
 import { useAuth } from '@/app/auth'
 import { LogoMark, Wordmark } from '@/components/ui/Logo'
 import { ProfileMenu } from './ProfileMenu'
@@ -16,7 +17,7 @@ import './shell.css'
 export function CoachShell() {
   const { data } = useQuery({ queryKey: ['coach-dashboard'], queryFn: api.coachDashboard })
   const waiting = data?.stats.waiting ?? 0
-  const unread = 2
+  const unread = useUnreadMessages()
   // The signed-in coach, not the demo data.
   const { user } = useAuth()
 
@@ -46,7 +47,10 @@ export function CoachShell() {
         <nav className="side-nav" aria-label="Coach">
           {NAV.map(({ to, icon: Icon, label, count, gold, rail, ...rest }) => (
             <NavLink key={to} to={to} end={'end' in rest} className={`side-link${rail ? '' : ' only-desktop'}`} title={label}>
-              <Icon size={20} strokeWidth={1.8} />
+              <span className="side-icon">
+                <Icon size={20} strokeWidth={1.8} />
+                {!!count && to === '/coach/messages' && <span className="unread-dot hide-desktop" />}
+              </span>
               <span className="only-desktop grow">{label}</span>
               {!!count && <span className={`badge only-desktop${gold ? '' : ' muted-badge'}`}>{count}</span>}
             </NavLink>
@@ -86,8 +90,12 @@ export function CoachShell() {
           { to: '/coach/messages', icon: MessageSquare, label: 'Messages' },
           { to: '/coach/settings', icon: Settings, label: 'More' },
         ].map(({ to, icon: Icon, label, ...rest }) => (
-          <NavLink key={to} to={to} end={'end' in rest} className="tab">
-            <span className="tab-icon"><Icon size={22} strokeWidth={1.8} /></span>
+          <NavLink key={to} to={to} end={'end' in rest} className="tab"
+            aria-label={to === '/coach/messages' && unread ? `Messages, ${unread} unread` : undefined}>
+            <span className="tab-icon">
+              <Icon size={22} strokeWidth={1.8} />
+              {to === '/coach/messages' && unread > 0 && <span className="tab-dot" />}
+            </span>
             <span>{label}</span>
           </NavLink>
         ))}

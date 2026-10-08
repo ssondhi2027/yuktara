@@ -21,7 +21,7 @@ import subprocess
 import sys
 import time
 import uuid
-from datetime import date, timedelta
+from datetime import UTC, datetime, timedelta
 
 import asyncpg
 import httpx
@@ -151,7 +151,9 @@ class As:
 
 # ---------- Walkthrough ----------
 
-today = date.today()
+# The test accounts sign up with timezone UTC, and the server's jobs work in each client's timezone,
+# so "today" is the UTC date (the local date differs in the evening, west of UTC).
+today = sql("select (now() at time zone 'UTC')::date")[0][0]
 coach_email = f"coach-{TAG}@example.test"
 client_email = f"client-{TAG}@example.test"
 other_email = f"other-{TAG}@example.test"
@@ -516,6 +518,69 @@ done_this_week = coach.get(
 )
 check(len(done_this_week) == 2, "dashboard's 'done this week' count comes from the real logs")
 
+step("Client and coach message each other; unread counts and read state; feedback is in the same thread")
+MESSAGE_COLS = "id,body,created_at,sender_id,check_in_id,read_at,check_ins(week_start)"
+
+
+def unread(who: As) -> int:
+    return who.rpc("unread_message_count", {}).json()
+
+
+check(unread(client) >= 1, "client has the check-in feedback unread")
+r = client.write(
+    "POST",
+    "messages",
+    {"client_id": client.id, "sender_id": client.id, "body": "Thanks! Can I swap the Friday session?"},
+)
+check(r.status_code == 201, "client sends a message to their coach")
+check(unread(coach) == 1, "coach sees it unread (badge 1)")
+threads = coach.rpc("message_threads", {}).json()
+row = next(t for t in threads if t["client_id"] == client.id)
+check(
+    row["unread"] == 1 and row["last_body"].startswith("Thanks!"),
+    "coach's conversation list shows the preview and 1 unread",
+)
+r = coach.write(
+    "PATCH",
+    "messages",
+    {"read_at": datetime.now(UTC).isoformat()},
+    client_id=f"eq.{client.id}",
+    sender_id=f"eq.{client.id}",
+    read_at="is.null",
+)
+check(r.status_code == 200 and len(r.json()) == 1, "opening the thread marks the client's message read")
+check(unread(coach) == 0, "coach's unread count is back to 0")
+r = coach.write("POST", "messages", {"client_id": client.id, "sender_id": coach.id, "body": "Yes, Saturday works too."})
+check(r.status_code == 201, "coach replies")
+thread = client.get("messages", select=MESSAGE_COLS, client_id=f"eq.{client.id}", order="created_at")
+bodies = [m["body"] for m in thread]
+feedback = [m for m in thread if m["check_in_id"] == ci]
+check(
+    len(feedback) == 1 and feedback[0]["check_ins"]["week_start"] and bodies[-1] == "Yes, Saturday works too.",
+    f"client's thread has the check-in feedback (week of {feedback[0]['check_ins']['week_start']}) and the reply",
+)
+check(unread(client) >= 1, "client sees the reply unread")
+r = client.write(
+    "PATCH",
+    "messages",
+    {"read_at": datetime.now(UTC).isoformat()},
+    client_id=f"eq.{client.id}",
+    sender_id=f"neq.{client.id}",
+    read_at="is.null",
+)
+check(r.status_code == 200 and unread(client) == 0, "client opens the thread and it's marked read")
+r = client.write(
+    "POST", "messages", {"client_id": client.id, "sender_id": coach.id, "body": "Pretending to be the coach"}
+)
+check(r.status_code >= 400, "client can't send as the coach")
+r = client.write("PATCH", "messages", {"body": "Edited"}, client_id=f"eq.{client.id}")
+check(r.status_code >= 400, "nobody can edit a message")
+statuses = [
+    client.write("POST", "messages", {"client_id": client.id, "sender_id": client.id, "body": f"Spam {n}"}).status_code
+    for n in range(12)
+]
+check(429 in statuses, f"sending is rate-limited (HTTP 429 after {statuses.index(429)} quick messages)")
+
 step("A second client (no invite code) can't see the first client; clients can't use coach endpoints")
 sign_up(other_email, "Other Client")
 confirm_via_mailpit(other_email)
@@ -631,6 +696,18 @@ client_queries = [
         },
     ),
     ("users", {"select": "id,full_name,unit_system", "id": f"eq.{client.id}"}),
+    ("messages", {"select": MESSAGE_COLS, "client_id": f"eq.{client.id}", "order": "created_at.desc", "limit": "300"}),
+    ("users", {"select": "id,full_name", "id": f"in.({client.id},{coach.id})"}),
+    ("client_profiles", {"select": "coach_id", "user_id": f"eq.{client.id}"}),
+    (
+        "check_ins",
+        {
+            "select": "id,client_id,week_start,status,submitted_at,avg_weight_kg,waist_cm,hips_cm,energy,sleep,stress,"
+            "hunger,wins,struggles,question",
+            "id": f"eq.{ci}",
+        },
+    ),
+    ("messages", {"select": MESSAGE_COLS, "check_in_id": f"eq.{ci}", "order": "created_at"}),
     ("checkin_questions", {"select": "id,prompt,answer_type", "is_active": "eq.true", "order": "position"}),
     ("checkin_answers", {"select": "question_id,value_number,value_text", "check_in_id": f"eq.{ci}"}),
     ("progress_photos", {"select": "pose,photo_url", "check_in_id": f"eq.{ci}"}),
@@ -680,6 +757,8 @@ coach_queries = [
     ),
     ("review_drafts", {"select": "body,updated_at", "check_in_id": f"eq.{ci}"}),
     ("users", {"select": "id,full_name,invite_code", "id": f"eq.{coach.id}"}),
+    ("client_profiles", {"select": "user_id", "user_id": f"eq.{client.id}", "coach_id": f"eq.{coach.id}"}),
+    ("messages", {"select": MESSAGE_COLS, "client_id": f"eq.{client.id}", "order": "created_at.desc", "limit": "300"}),
 ]
 for table, params in coach_queries:
     r = http.get(f"{SUPABASE}/rest/v1/{table}", headers=coach.h, params=params)
@@ -702,5 +781,8 @@ check(
 )
 check(coach.rpc("get_coach_notes", {"client": client.id}).json() == "private", "coach reads private notes")
 check(client.rpc("get_coach_notes", {"client": client.id}).json() is None, "client can't read the coach's notes")
+for who, name in ((client, "client"), (coach, "coach")):
+    for fn in ("unread_message_count", "message_threads"):
+        check(who.rpc(fn, {}).status_code == 200, f"{name} runs {fn}")
 
 print("\nApp queries passed.")

@@ -87,11 +87,16 @@ Errors always look like `{"error": {"code", "message"}, "request_id"}`. Validati
 - **Direct to Supabase** (one table, as the signed-in user, RLS):
   - **Client:** reading every screen, logging meals (`meal_logs`), habits and the day rating (`daily_logs`), saving the check-in draft (`check_ins`), the body model, and workouts (`workout_sessions`, `set_logs`: start, save each set as it's ticked, finish, discard).
   - **Coach:** the dashboard, check-in lists and review screens; first targets (`nutrition_targets`); review drafts (`review_drafts`); private notes (`set_coach_notes`); a client's logged workouts, read-only (client sheet).
-- **Through this API** (several tables at once): submitting a check-in, reviewing one, exercise swaps, photo upload links, invite codes.
+  - **Both:** messages (`messages`): reading a conversation, sending, marking read; plus `message_threads()` (the coach's conversation list) and `unread_message_count()` (nav badges).
+- **Through this API** (several tables at once): submitting a check-in, reviewing one (its feedback becomes a message with `check_in_id`), exercise swaps, photo upload links, invite codes.
 - **Coach freshness:**
   - Coach screens refetch every 30 s and when the window regains focus (`COACH_REFRESH` in `frontend/src/lib/api.ts`).
   - This was chosen over Supabase Realtime: the coach views combine several tables, so any change would mean a refetch anyway. Polling needs no publication or extra RLS setup, and 30 s is plenty for coaching.
   - The client app refreshes from its own writes.
+- **Messages: polling, not Realtime.**
+  - An open conversation refetches every 5 s; the coach's conversation list and both apps' unread badges every 15 s (`THREAD_REFRESH`, `UNREAD_REFRESH` in `frontend/src/lib/api.ts`). React Query pauses polling in hidden tabs and refetches when the window regains focus. Sending updates the sender's own view at once.
+  - Why not Supabase Realtime: polling reuses the same RLS'd queries the screens already make, needs no `supabase_realtime` publication or dashboard setting, behaves the same locally and in production, and has no socket to reconnect on flaky phone networks. One small indexed query every 5 s per open conversation is cheap at coaching scale. Switching later means adding `messages` to the publication and subscribing to `postgres_changes` for `client_id = <thread>`; the screens wouldn't change.
+- **Sending is direct, rate-limited in the database.** A plain message changes one table, so the apps insert it as the signed-in user. RLS (0014) allows a client to write only into their own conversation when they have a coach, a coach only into their clients' conversations, always with `sender_id = auth.uid()`. The limit (10 a minute, 60 per 10 minutes per sender, check-in feedback included) is a trigger, not an API endpoint: the API runs as the user too, so an endpoint couldn't stop direct inserts, and its limiter is per instance. The trigger raises SQLSTATE `PT429`, which PostgREST and this API both answer with 429.
 
 ## How the backend uses the database
 
@@ -110,11 +115,11 @@ Errors always look like `{"error": {"code", "message"}, "request_id"}`. Validati
 | --- | --- |
 | Tokens | Signature, expiry, audience `authenticated`, issuer `<SUPABASE_URL>/auth/v1` and `role = authenticated` are all checked. Keys come from the project's JWKS (cached 10 min, refetched for unknown key ids at most every 30 s), falling back to the legacy HS256 secret. The algorithm follows the key type, so HS256/asymmetric confusion and `alg: none` are refused. |
 | CORS | Only `ALLOWED_ORIGINS` (exact origins, no wildcards); no cookies. |
-| Rate limits | Per user, in memory: writes 30/min, messages 20 per 10 min, upload links 30/min, invite rotation 5/hour. Over the limit returns 429 with `Retry-After`. |
+| Rate limits | Per user, in memory: writes 30/min, messages 20 per 10 min, upload links 30/min, invite rotation 5/hour. Over the limit returns 429 with `Retry-After`. Messages also have a database limit for every path (10/min, 60 per 10 min per sender, 0014). |
 | Headers | `nosniff`, `X-Frame-Options: DENY`, `CSP default-src 'none'`, `Referrer-Policy: no-referrer`, `Cache-Control: no-store`, and HSTS in production. |
 | Size | Request bodies are limited to 64 KB. |
 | API browser | `/docs` and `/openapi.json` are off in production. |
-| Logs | Request id, method, route template, status and time only. Never tokens, bodies, query strings or health data. Database errors are logged by SQLSTATE, and crashes by error type and line, because messages and tracebacks can contain user data. |
+| Logs | Request id, method, route template, status and time only. Never tokens, bodies (including message text), query strings or health data. Database errors are logged by SQLSTATE, and crashes by error type and line, because messages and tracebacks can contain user data. |
 | Container | Runs as a non-root user, with dependencies pinned exactly. CI runs `pip-audit` and `npm audit`. |
 
 ### TODO before real users (PIPEDA / GDPR)
