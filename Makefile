@@ -1,7 +1,7 @@
 # Yuktara developer commands. Backend commands run in backend/ with its .venv.
 #   make setup   create backend/.venv and install dependencies
 #   make dev     run the API on http://127.0.0.1:8000 (reloads on change)
-#   make test    backend tests (database tests run when TEST_DATABASE_URL is set)
+#   make test    backend tests (database tests run when TEST_DATABASE_URL is set) and the frontend unit tests
 #   make test-db start local Supabase, reset it, run every backend test against it
 #   make lint    ruff for the backend, typecheck for the frontend
 #   make walkthrough  end-to-end flow on the local stack (needs `make dev` running with SUPABASE_SERVICE_ROLE_KEY)
@@ -24,6 +24,7 @@ dev:
 
 test:
 	cd backend && $(PY) -m pytest
+	cd frontend && npm test
 
 test-db:
 	npx supabase start -x studio,logflare,vector,edge-runtime,realtime,imgproxy,postgres-meta

@@ -49,3 +49,6 @@
 .client-workouts summary::-webkit-details-marker { display: none; }
 .workout-detail { margin-top: 8px; padding: 10px 12px; border-radius: 12px; background: var(--surface-2); }
 .workout-detail > div { grid-template-columns: minmax(0, 140px) 1fr; }
+
+/* Client sheet: current program */
+.sheet-program { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; border-radius: 14px; background: var(--surface-2); }

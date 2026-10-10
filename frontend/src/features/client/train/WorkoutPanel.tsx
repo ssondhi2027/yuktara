@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router'
 import { useMutation } from '@tanstack/react-query'
 import { Check, ChevronRight, Plus } from 'lucide-react'
 import { api, type PlannedWorkout, type TrainWeek, type WorkoutSummary } from '@/lib/api'
-import { monthDay, weekday } from '@/lib/dates'
+import { monthDay, shortDay, weekday } from '@/lib/dates'
 import { MUSCLE_LABEL } from '@/lib/muscles'
 import { volumeLabel } from '@/lib/workouts'
 
@@ -36,7 +36,10 @@ export function TodayCard({ data, compact }: { data: TrainWeek; compact: boolean
     title = `${todays.name} · ${todays.exercises.length} exercises`
     action = <button className="btn btn-gold btn-lg" disabled={pending} onClick={() => start(todays.template_id)}>{pending ? 'Starting…' : compact ? 'Start' : 'Start workout'}</button>
   } else {
-    title = todays ? `${todays.name} · done` : data.has_program ? 'Rest day' : 'Your coach is setting up your plan'
+    title = todays ? `${todays.name} · done`
+      : data.has_program ? 'Rest day'
+        : data.next_program ? `${data.next_program.name} starts ${shortDay(data.next_program.start_date)}`
+          : 'Your coach is setting up your plan'
     action = <button className="btn btn-outline btn-lg today-own" disabled={pending} onClick={() => start(null)}>{compact ? 'Log' : 'Log a workout'}</button>
   }
 
@@ -75,7 +78,9 @@ export function WorkoutWeek({ data }: { data: TrainWeek }) {
         </div>
         {data.plan.length === 0 ? (
           <p className="small muted">
-            {data.has_program ? 'No workouts planned this week.' : 'Your coach is setting up your plan.'} You can still log your own workouts.
+            {data.has_program ? 'No workouts planned this week.'
+              : data.next_program ? `Your program starts ${shortDay(data.next_program.start_date)}.`
+                : 'Your coach is setting up your plan.'} You can still log your own workouts.
           </p>
         ) : (
           <ul className="plan-list">

@@ -4,7 +4,7 @@
 import { MUSCLE_GROUPS, type BodyModel, type MealType, type MuscleGroup, type OnPlan, type PhotoPose, type UnitSystem } from '@/types/db'
 import type {
   CheckinDraft, ClientHome, ClientProgress, DailyPatch, DaySummary, FoodDay, LastTime, LibraryExercise, Meal, MuscleDetail,
-  MuscleExercise, OpenWorkout, Person, PlannedExercise, SetWrite, TodayWorkout, TrainWeek, WeekPoint, WorkoutLog, WorkoutSummary,
+  MuscleExercise, NextProgram, OpenWorkout, Person, PlannedExercise, SetWrite, TodayWorkout, TrainWeek, WeekPoint, WorkoutLog, WorkoutSummary,
 } from '../api'
 import { ApiError, backend, uploadPhoto } from '../backend'
 import { addDays, parseDate, today, weekStart } from '../dates'
@@ -18,7 +18,7 @@ import { minutesSince, OWN_WORKOUT, weekPlan, workoutsDone, type PlanTemplate } 
 
 interface TemplateExercise {
   id: string; position: number; target_sets: number; target_reps: string; target_rpe: number | null; rest_seconds: number | null
-  exercise_id: string; name: string; cue: string | null
+  exercise_id: string; name: string; cue: string | null; notes: string | null
 }
 interface Template { id: string; name: string; day_of_week: number | null; position: number; notes: string | null; exercises: TemplateExercise[] }
 interface Program { id: string; name: string; start_date: string; weeks: number; templates: Template[] }
@@ -35,6 +35,8 @@ interface Me {
   meals_per_day: number | null
   coach: Person | null
   program: Program | null
+  /** an assigned program that starts later */
+  next: NextProgram | null
 }
 
 async function loadMe(): Promise<Me> {
@@ -48,18 +50,24 @@ async function loadMe(): Promise<Me> {
   ])
   const user = must(u)
   const prof = must(p)
-  const [coachRes, programRes] = await Promise.all([
+  const [coachRes, programRes, nextRes] = await Promise.all([
     prof.coach_id ? db().from('users').select('id, full_name').eq('id', prof.coach_id).maybeSingle() : null,
+    // The latest assigned program that has started (RLS hides drafts); removed workouts and exercises left out (0015).
     db().from('programs')
-      .select('id, name, start_date, weeks, workout_templates(id, name, day_of_week, position, notes, template_exercises(id, position, target_sets, target_reps, target_rpe, rest_seconds, exercise_id, exercises(name, cue)))')
+      .select('id, name, start_date, weeks, workout_templates(id, name, day_of_week, position, notes, template_exercises(id, position, target_sets, target_reps, target_rpe, rest_seconds, notes, exercise_id, exercises(name, cue)))')
       .eq('client_id', uid)
       .lte('start_date', today())
+      .is('workout_templates.removed_at', null)
+      .is('workout_templates.template_exercises.removed_at', null)
       .order('start_date', { ascending: false })
       .limit(1),
+    db().from('programs').select('name, start_date').eq('client_id', uid).gt('start_date', today()).order('start_date').limit(1),
   ])
   const coachRow = coachRes ? must(coachRes) : null
   const prog = must(programRes)[0]
+  const next = (must(nextRes) as NextProgram[])[0] ?? null
   return {
+    next,
     id: uid,
     person: person(uid, user.full_name),
     units: user.unit_system ?? 'metric',
@@ -79,7 +87,7 @@ async function loadMe(): Promise<Me> {
           .map((x: any) => ({
             id: x.id, position: x.position, target_sets: x.target_sets, target_reps: x.target_reps,
             target_rpe: x.target_rpe != null ? Number(x.target_rpe) : null, rest_seconds: x.rest_seconds,
-            exercise_id: x.exercise_id, name: x.exercises?.name ?? 'Exercise', cue: x.exercises?.cue ?? null,
+            exercise_id: x.exercise_id, name: x.exercises?.name ?? 'Exercise', cue: x.exercises?.cue ?? null, notes: x.notes ?? null,
           })),
       })).sort((a: Template, b: Template) => a.position - b.position),
     } : null,
@@ -158,7 +166,7 @@ function planned(t: Template, swaps: Swaps): PlanTemplate {
       const sw = swaps[x.id]
       return {
         template_exercise_id: x.id, exercise_id: sw?.id ?? x.exercise_id, name: sw?.name ?? x.name, cue: sw ? sw.cue : x.cue,
-        sets: x.target_sets, reps: x.target_reps, rpe: x.target_rpe, rest_seconds: x.rest_seconds,
+        sets: x.target_sets, reps: x.target_reps, rpe: x.target_rpe, rest_seconds: x.rest_seconds, notes: x.notes,
       }
     }),
   }
@@ -278,7 +286,7 @@ async function home(): Promise<ClientHome> {
     today: t,
     me: { ...me.person, body_model: me.body_model },
     coach: me.coach,
-    program: { week, weeks: me.program?.weeks ?? null, start_date: me.start_date, has_program: !!me.program },
+    program: { week, weeks: me.program?.weeks ?? null, start_date: me.start_date, has_program: !!me.program, next: me.next },
     days,
     week: {
       workouts_done: workoutsDone(sessions, !!me.program),
@@ -345,6 +353,7 @@ async function trainWeek(): Promise<TrainWeek> {
     body_model: me.body_model,
     sets,
     has_program: !!me.program,
+    next_program: me.next,
     units: me.units,
     plan: weekPlan((me.program?.templates ?? []).map((x) => planned(x, swaps)), weekSessions, t, startDate),
     open_workout: open,

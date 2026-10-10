@@ -18,6 +18,9 @@ import { demo } from './demo'
 import { liveClient } from './live/client'
 import { liveCoach } from './live/coach'
 import { liveMessages } from './live/messages'
+import { livePrograms } from './live/programs'
+import { draftFromAnswers } from './programs'
+import { today } from './dates'
 import { isDemo } from './supabase'
 
 export { ApiError } from './backend'
@@ -91,7 +94,7 @@ export interface ClientHome {
   /** null until a coach is linked */
   coach: Person | null
   /** week 1 is the week containing start_date; weeks is null without a program */
-  program: { week: number; weeks: number | null; start_date: string; has_program: boolean }
+  program: { week: number; weeks: number | null; start_date: string; has_program: boolean; next: NextProgram | null }
   days: DaySummary[]
   week: { workouts_done: number; workouts_planned: number; meals_on_plan: number; meals_planned: number; avg_protein_g: number | null }
   /** 'none' = no check-in open yet; next_date says when the next one opens */
@@ -126,6 +129,8 @@ export interface TrainWeek {
   body_model: BodyModel
   sets: Record<MuscleGroup, number>
   has_program: boolean
+  /** an assigned program that starts later */
+  next_program: NextProgram | null
   units: UnitSystem
   /** this week's planned workouts, Monday first; empty without a program */
   plan: PlannedWorkout[]
@@ -156,6 +161,8 @@ export interface PlannedExercise {
   rpe: number | null
   rest_seconds: number | null
   cue: string | null
+  /** the coach's note for this exercise */
+  notes: string | null
 }
 
 export type PlannedStatus = 'done' | 'in_progress' | 'today' | 'missed' | 'upcoming' | 'anytime'
@@ -214,6 +221,9 @@ export interface WorkoutSummary {
   exercises: { name: string; sets: LoggedSet[] }[]
 }
 
+/** A program the coach assigned that hasn't started yet. */
+export interface NextProgram { name: string; start_date: string }
+
 export interface CheckinQuestion { id: string; prompt: string; answer_type: AnswerType }
 export interface CheckinAnswerValue { value_number?: number | null; value_text?: string | null }
 
@@ -253,6 +263,77 @@ export interface ClientProgress {
   waist: { cm: number; change: number } | null
   lift: { exercise: string; reps: number; kg: number; change: number } | null
   coach_note: CoachNote | null
+}
+
+// ---------- Programs (coach builder) ----------
+export interface ProgramExercise {
+  /** null until saved */
+  id: string | null
+  exercise_id: string
+  name: string
+  sets: number
+  reps: string
+  rpe: number | null
+  rest_seconds: number | null
+  notes: string
+}
+
+export interface ProgramWorkout {
+  id: string | null
+  name: string
+  /** 0 = Sunday; null = any day */
+  day_of_week: number | null
+  notes: string
+  exercises: ProgramExercise[]
+}
+
+/** template: reusable; draft: not assigned yet; upcoming/active/ended: assigned to the client. */
+export type ProgramStatus = 'template' | 'draft' | 'upcoming' | 'active' | 'ended'
+
+export interface Program {
+  /** null = generated, not saved yet */
+  id: string | null
+  /** null for a template */
+  client_id: string | null
+  name: string
+  weeks: number
+  goal: GoalType | null
+  level: ExerciseLevel | null
+  days_per_week: number | null
+  status: ProgramStatus
+  /** when an assigned program starts */
+  start_date: string | null
+  /** the start date picked for a draft */
+  draft_start: string | null
+  /** program week today, when active */
+  week: number | null
+  workouts: ProgramWorkout[]
+  /** from the generator (unsaved drafts only) */
+  warnings?: string[]
+}
+
+/** The Programs page's "Clients" view: setup answers and where each client's program stands. */
+export interface ProgramClientRow {
+  client: Person
+  setup_done: boolean
+  goal: GoalType | null
+  experience: ExerciseLevel | null
+  training_days: number | null
+  train_location: TrainLocation | null
+  injuries: string | null
+  current: { id: string; name: string; week: number; weeks: number; start_date: string } | null
+  upcoming: { id: string; name: string; start_date: string } | null
+  draft: { id: string; name: string } | null
+}
+
+export interface ProgramTemplateRow {
+  id: string
+  name: string
+  goal: GoalType | null
+  level: ExerciseLevel | null
+  days_per_week: number | null
+  weeks: number
+  workouts: number
 }
 
 // ---------- Messages ----------
@@ -437,6 +518,9 @@ export interface ClientDetail {
   meals_per_day: number | null
   targets: Targets | null
   targets_from: string | null
+  /** the program running now (or starting next), and any unassigned draft */
+  program: { id: string; name: string; status: ProgramStatus; week: number | null; weeks: number; start_date: string | null } | null
+  draft_program_id: string | null
 }
 
 export interface SwapRequest { template_exercise_id: string; to_exercise_id: string; from_week: number; to_week: number }
@@ -500,6 +584,24 @@ export const api = {
   unreadMessages: (): Promise<number> => (isDemo ? wait(demo.unreadMessages()) : liveMessages.unreadCount()),
   conversations: (): Promise<Conversation[]> => (isDemo ? wait(demo.conversations()) : liveMessages.conversations()),
   checkinSummary: (id: string): Promise<CheckinSummary> => (isDemo ? wait(demo.checkinSummary(id)) : liveMessages.checkinSummary(id)),
+
+  // programs (coach; save/assign/copy are database functions run as the coach, RLS, 0015)
+  programClients: (): Promise<ProgramClientRow[]> => (isDemo ? wait(demo.programClients()) : livePrograms.clients()),
+  programTemplates: (): Promise<ProgramTemplateRow[]> => (isDemo ? wait(demo.programTemplates()) : livePrograms.templates()),
+  program: (id: string): Promise<Program> => (isDemo ? wait(demo.program(id)) : livePrograms.get(id)),
+  /** A first draft built in the browser from the client's setup answers (programGen.ts). Not saved. */
+  generateProgram: async (clientId: string): Promise<Program> => {
+    const [detail, library] = await Promise.all([api.clientDetail(clientId), api.exerciseLibrary()])
+    return draftFromAnswers(detail, library, today())
+  },
+  saveProgram: (p: Program): Promise<{ id: string }> => (isDemo ? wait(demo.saveProgram(p)) : livePrograms.save(p)),
+  /** Makes it the client's program from `start`; the previous one stops there. */
+  assignProgram: (id: string, start: string) => (isDemo ? wait(demo.assignProgram(id, start)) : livePrograms.assign(id, start)),
+  /** clientId null = save as a template; otherwise a new draft for that client. */
+  copyProgram: (id: string, clientId: string | null): Promise<{ id: string }> =>
+    isDemo ? wait(demo.copyProgram(id, clientId)) : livePrograms.copy(id, clientId),
+  /** Drafts and templates only. */
+  deleteProgram: (id: string) => (isDemo ? wait(demo.deleteProgram(id)) : livePrograms.remove(id)),
 
   /** A client's logged workouts, newest first (read-only for the coach). */
   clientWorkouts: (clientId: string): Promise<WorkoutSummary[]> =>

@@ -9,6 +9,7 @@ import { CheckinPage } from '@/features/client/checkin/CheckinPage'
 import { CheckinSummaryPage } from '@/features/client/checkin/CheckinSummaryPage'
 import { MessagesPage } from '@/features/client/messages/MessagesPage'
 import { CoachMessagesPage } from '@/features/coach/messages/CoachMessagesPage'
+import { ProgramsPage } from '@/features/coach/programs/ProgramsPage'
 import { ProgressPage } from '@/features/client/progress/ProgressPage'
 import { CoachDashboardPage } from '@/features/coach/dashboard/DashboardPage'
 import { CheckinsPage } from '@/features/coach/review/CheckinsPage'
@@ -45,7 +46,9 @@ export const router = createBrowserRouter([
       { path: 'check-ins', element: <CheckinsPage /> },
       { path: 'check-ins/:id', element: <CheckinsPage /> },
       { path: 'clients', element: <ComingSoon title="Clients" text="Every client, their program, targets and history." /> },
-      { path: 'programs', element: <ComingSoon title="Programs" text="Build templates and assign workouts week by week." /> },
+      { path: 'programs', element: <ProgramsPage /> },
+      { path: 'programs/new/:clientId', element: <ProgramsPage /> },
+      { path: 'programs/:programId', element: <ProgramsPage /> },
       { path: 'nutrition', element: <ComingSoon title="Nutrition plans" text="Calorie and macro targets, versioned by start date." /> },
       { path: 'messages', element: <CoachMessagesPage /> },
       { path: 'messages/:clientId', element: <CoachMessagesPage /> },

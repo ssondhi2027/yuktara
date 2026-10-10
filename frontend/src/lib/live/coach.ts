@@ -11,6 +11,7 @@ import type {
   QueueItem, SwapRequest, Targets, WeekPoint, WorkoutSummary,
 } from '../api'
 import { ApiError, backend } from '../backend'
+import { programStatus, programWeekOf } from '../programs'
 import { workoutsDone } from '../workouts'
 import { addDays, clockTime, monthDay, today, weekday, weekStart } from '../dates'
 import {
@@ -49,7 +50,7 @@ async function loadClients(): Promise<{ uid: string; coach: Person; invite_code:
   const [users, programs] = await Promise.all([
     db().from('users').select('id, full_name, email').in('id', ids),
     db().from('programs').select('client_id, weeks, start_date, workout_templates(id, day_of_week)')
-      .in('client_id', ids).lte('start_date', today()).order('start_date', { ascending: false }),
+      .in('client_id', ids).lte('start_date', today()).is('workout_templates.removed_at', null).order('start_date', { ascending: false }),
   ])
   const userById = Object.fromEntries((must(users) as any[]).map((u) => [u.id, u]))
   const progs = must(programs) as any[]
@@ -313,7 +314,7 @@ async function checkinReview(id: string): Promise<CheckinReview> {
   const [user, profile, programs, logs, meals, sessions, history, summaries, photos, draft, notes, answers, targets, queue] = await Promise.all([
     db().from('users').select('id, full_name').eq('id', clientId).single(),
     db().from('client_profiles').select(PROFILE_COLS).eq('user_id', clientId).single(),
-    db().from('programs').select('weeks, start_date, workout_templates(id, day_of_week)').eq('client_id', clientId).lte('start_date', ws).order('start_date', { ascending: false }).limit(1),
+    db().from('programs').select('weeks, start_date, workout_templates(id, day_of_week)').eq('client_id', clientId).lte('start_date', ws).is('workout_templates.removed_at', null).order('start_date', { ascending: false }).limit(1),
     db().from('daily_logs').select('log_date, weight_kg').eq('client_id', clientId).not('weight_kg', 'is', null),
     db().from('meal_logs').select('on_plan').eq('client_id', clientId).gte('eaten_at', dayBounds(ws)[0]).lt('eaten_at', dayBounds(addDays(ws, 7))[0]),
     db().from('workout_sessions').select('status, workout_template_id').eq('client_id', clientId).gte('performed_on', ws).lte('performed_on', addDays(ws, 6)),
@@ -434,11 +435,17 @@ async function applySuggestion(id: string, swap?: SwapRequest) {
 }
 
 async function clientDetail(clientId: string): Promise<ClientDetail> {
-  const [u, p, targets] = await Promise.all([
+  const [u, p, targets, programs] = await Promise.all([
     db().from('users').select('id, full_name, email').eq('id', clientId).single(),
     db().from('client_profiles').select(PROFILE_COLS).eq('user_id', clientId).single(),
     targetsOn(clientId, today()),
+    db().from('programs').select('id, name, weeks, start_date, assigned_at').eq('client_id', clientId).eq('is_template', false),
   ])
+  const t = today()
+  const progs = must(programs) as { id: string; name: string; weeks: number; start_date: string | null; assigned_at: string | null }[]
+  // The program running now, else the next one to start.
+  const shown = progs.filter((x) => x.assigned_at && x.start_date && x.start_date <= t).sort((a, b) => b.start_date!.localeCompare(a.start_date!))[0]
+    ?? progs.filter((x) => x.assigned_at && x.start_date && x.start_date > t).sort((a, b) => a.start_date!.localeCompare(b.start_date!))[0]
   const user: any = must(u)
   const prof: any = must(p)
   const n = (x: unknown) => (x == null ? null : Number(x))
@@ -463,6 +470,11 @@ async function clientDetail(clientId: string): Promise<ClientDetail> {
     meals_per_day: prof.meals_per_day,
     targets: targets?.targets ?? null,
     targets_from: targets?.from ?? null,
+    program: shown ? (() => {
+      const status = programStatus({ is_template: false, assigned: true, start_date: shown.start_date, weeks: shown.weeks }, t)
+      return { id: shown.id, name: shown.name, status, week: status === 'active' ? programWeekOf(shown.start_date!, t) : null, weeks: shown.weeks, start_date: shown.start_date }
+    })() : null,
+    draft_program_id: progs.find((x) => !x.assigned_at)?.id ?? null,
   }
 }
 

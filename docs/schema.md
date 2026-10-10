@@ -60,6 +60,31 @@ The app's route guard (`RequireAuth` in `frontend/src/app/auth.tsx`) is only a c
    `<CODE>` is the invite code clients will type, 4–20 letters, digits or dashes (for example `NAME-7Q4K`). The coach can replace it later from the app (`POST /coach/invite-code`).
 3. Log out and log in again: the coach app opens.
 
+## Programs (0015_programs.sql)
+
+- **Drafts.** A client program is a draft until the coach assigns it: `assigned_at` and `start_date` are null, and `draft_start` holds the start date picked in the builder. Clients can't read drafts (RLS) and the summaries ignore them (no `start_date`). Templates are programs with `is_template` and no client, as in 0003; only their coach sees them.
+- **Saving.** `save_program(jsonb)` writes a whole program (workouts and exercises in order) in one transaction, as the coach, so RLS applies. Rows without an id are new.
+- **History is never rewritten.** A workout that logged sessions point at, or an exercise that logged sets point at, is marked `removed_at` instead of deleted when the coach takes it out; changing the exercise of a slot with logged sets marks the old slot removed and adds a new one. The apps and summaries skip removed rows; past sessions keep their workout's name and their sets keep their slot.
+- **Assigning.** `assign_program(program, start)` sets `start_date` (today or later; the builder defaults to the coming Monday). The program it replaces stops at the end of the week before (`weeks` is cut down); one that hadn't reached that week is unscheduled (`start_date` null). The client's current program is the latest assigned one that has started.
+- **Copying.** `copy_program(source, client)` saves a program as a template (`client` null) or starts a client draft from a template. Removed rows aren't copied.
+- **Access.** A coach creates, edits and copies only their own templates and their own clients' programs, and deletes only drafts and templates. A client reads only programs assigned to them and never writes.
+- **New columns.** `programs.goal`, `level`, `days_per_week` (template filters, generator inputs), `assigned_at`, `draft_start`; `template_exercises.notes` (the coach's note to the client); `removed_at` on workouts and exercises. Checks: sets 1–10, RPE 1–10, reps 1–20 characters, rest 0–900 s.
+- **Weekly summaries** are recreated: planned = the program's live workouts that have a day; done = distinct planned workouts with a finished session that week (matching the apps).
+
+### The program generator
+
+`frontend/src/lib/programGen.ts` builds the first draft in the browser from the client's setup answers, with only library exercises. The rules are data at the top of the file:
+
+| Answer | Decides |
+| --- | --- |
+| Goal | The split for each number of days (`SPLITS`), reps, rest, RPE and notes (`GOALS`). Muscle gain: hypertrophy splits, 6–10 / 10–15 reps. Fat loss: full body or upper/lower, short rests. Performance: compound strength, 3–5 reps (5–6 for beginners). Health: full body only, one set fewer, RPE 7. |
+| Experience | Exercises per workout (5 / 6 / 7), sets, which levels and equipment (beginners: no barbell), weeks (8 / 10 / 12) and the weekly sets range per major muscle (`LEVELS`). |
+| Training days | 2–3 full body, 4 upper/lower, 5–6 push/pull/legs or upper/lower + full body (by goal), on spread-out weekdays (`SCHEDULE`). Outside 2–6 is clamped, with a note. |
+| Location | Home: bodyweight and dumbbells only (`LOCATIONS`). |
+| Injuries | Not interpreted; the builder shows them prominently. |
+
+Each workout type is a list of slots (muscle + compound/isolation). A slot takes the first matching exercise: staples first (`STAPLES`), then the equipment preference; a repeated day takes the next one, so Upper B differs from Upper A. Weekly hard sets are then counted like `muscle_sets_for_week` and nudged into range (sets first, then dropping or adding an exercise). A major muscle with no eligible exercise in the library (e.g. hamstrings at home) is reported as a warning. Unit tests: `cd frontend && npm test`.
+
 ## Messaging (0014_messaging.sql)
 
 - **One conversation per client.** Every message with the same `client_id`; its members are the client and their current coach (`can_see_client`). Check-in feedback from `POST /checkins/{id}/review` is a message with `check_in_id` set, in the same conversation.

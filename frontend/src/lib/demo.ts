@@ -6,13 +6,15 @@ import type { BodyModel, ExerciseLevel, MealType, MuscleGroup, OnPlan } from '@/
 import type {
   CheckinDraft, CheckinLists, CheckinReview, ClientDetail, ClientHome, ClientProgress, ClientRow,
   ChatMessage, CheckinSummary, CoachDashboard, CoachNote, Conversation, DailyPatch, DaySummary, FoodDay, LastTime,
-  LibraryExercise, Meal, MessageThread, MuscleDetail, Person,
-  PlannedExercise, QueueItem, SetWrite, Targets, TodayWorkout, TrainWeek, WorkoutLog, WorkoutSummary,
+  LibraryExercise, Meal, MessageThread, MuscleDetail, NextProgram, Person, PlannedExercise, Program, ProgramClientRow,
+  ProgramTemplateRow, ProgramWorkout, QueueItem, SetWrite, Targets, TodayWorkout, TrainWeek, WorkoutLog, WorkoutSummary,
 } from './api'
-import type { GoalType } from '@/types/db'
+import type { ExerciseLevel as Level, GoalType, TrainLocation } from '@/types/db'
 import { addDays, pinToday } from './dates'
 import { ApiError } from './backend'
 import { minutesSince, OWN_WORKOUT, summarize, weekPlan, type PlanTemplate } from './workouts'
+import { generateProgram } from './programGen'
+import { programStatus, programWeekOf } from './programs'
 import { getCurrentUser } from './session'
 import { isDemo } from './supabase'
 
@@ -194,7 +196,7 @@ const PROGRAM_START = '2026-08-24'
 let slotSeq = 0
 const slot = (name: string, sets: number, reps: string, rpe: number | null = 8, rest: number | null = 90): PlannedExercise => {
   const e = exerciseLibrary.find((x) => x.name === name)!
-  return { template_exercise_id: `te-${++slotSeq}`, exercise_id: e.id, name, cue: e.cue, sets, reps, rpe, rest_seconds: rest }
+  return { template_exercise_id: `te-${++slotSeq}`, exercise_id: e.id, name, cue: e.cue, sets, reps, rpe, rest_seconds: rest, notes: null }
 }
 
 const templates: PlanTemplate[] = [
@@ -245,7 +247,7 @@ const sessions = new Map<string, DemoSession>([
   ] }],
 ])
 
-const sessionName = (s: DemoSession) => templates.find((t) => t.id === s.template_id)?.name ?? OWN_WORKOUT
+const sessionName = (s: DemoSession) => (s.template_id ? workoutNameOf(s.template_id) : null) ?? OWN_WORKOUT
 
 function sessionSummary(s: DemoSession): WorkoutSummary {
   return summarize(
@@ -377,6 +379,135 @@ function reviewFor(r: Roster) {
   return reviewState.get(id)!
 }
 
+// ---------- Programs ----------
+// Aisha keeps her hand-built program (the week on Train); the other clients get
+// programs generated from their goals; Sofia and Hana have none yet.
+interface DemoProgram {
+  id: string; client_id: string | null; is_template: boolean; assigned: boolean; name: string; weeks: number
+  goal: GoalType | null; level: Level | null; days_per_week: number | null; start_date: string | null; draft_start: string | null
+  workouts: ProgramWorkout[]
+}
+
+const LEVEL_CYCLE: Level[] = ['beginner', 'intermediate', 'advanced']
+const PLACE_CYCLE: TrainLocation[] = ['gym', 'gym', 'home', 'both']
+const DAYS_BY_GOAL: Record<GoalType, number[]> = { muscle_gain: [4, 5, 6], fat_loss: [3, 4, 2], performance: [4, 3, 5], health: [3, 2, 4] }
+
+/** Setup answers for the demo roster (Aisha's match her program). */
+function answersOf(clientId: string): { experience: Level; training_days: number; train_location: TrainLocation; injuries: string | null } {
+  if (clientId === aisha.id) return { experience: 'intermediate', training_days: 4, train_location: 'gym', injuries: 'Lower back gets tight after heavy deadlifts.' }
+  const i = Math.max(0, roster.findIndex((r) => r.client.id === clientId))
+  const goal = roster[i]?.goal ?? 'health'
+  return {
+    experience: LEVEL_CYCLE[i % 3], training_days: DAYS_BY_GOAL[goal][i % 3], train_location: PLACE_CYCLE[i % 4],
+    injuries: i % 5 === 2 ? 'Left knee aches on deep lunges.' : null,
+  }
+}
+
+function withIds(id: string, workouts: ProgramWorkout[]): ProgramWorkout[] {
+  return workouts.map((w, i) => ({
+    ...w, id: w.id ?? `${id}-w${i}-${crypto.randomUUID().slice(0, 4)}`,
+    exercises: w.exercises.map((x, j) => ({ ...x, id: x.id ?? `${id}-w${i}-x${j}-${crypto.randomUUID().slice(0, 4)}` })),
+  }))
+}
+
+function generated(id: string, client_id: string | null, goal: GoalType, level: Level, days: number, place: TrainLocation): DemoProgram {
+  const g = generateProgram({ goal, experience: level, training_days: days, train_location: place }, exerciseLibrary)
+  return {
+    id, client_id, is_template: client_id == null, assigned: false, name: g.name, weeks: g.weeks, goal, level, days_per_week: days,
+    start_date: null, draft_start: null,
+    workouts: withIds(id, g.workouts.map((w) => ({
+      id: null, name: w.name, day_of_week: w.day_of_week, notes: w.notes,
+      exercises: w.exercises.map((x) => ({ id: null, exercise_id: x.exercise_id, name: x.name, sets: x.sets, reps: x.reps, rpe: x.rpe, rest_seconds: x.rest_seconds, notes: x.notes })),
+    }))),
+  }
+}
+
+const programs = new Map<string, DemoProgram>()
+programs.set('prog-aisha', {
+  id: 'prog-aisha', client_id: aisha.id, is_template: false, assigned: true, name: 'Recomp block', weeks: 12, goal: 'fat_loss',
+  level: 'intermediate', days_per_week: 4, start_date: PROGRAM_START, draft_start: null,
+  workouts: templates.map((t) => ({
+    id: t.id, name: t.name, day_of_week: t.day_of_week, notes: t.notes ?? '',
+    exercises: t.exercises.map((x) => ({ id: x.template_exercise_id, exercise_id: x.exercise_id, name: x.name, sets: x.sets, reps: x.reps, rpe: x.rpe, rest_seconds: x.rest_seconds, notes: x.notes ?? '' })),
+  })),
+})
+for (const r of roster) {
+  if (r.client.id === aisha.id || ['c-sofia', 'c-hana'].includes(r.client.id)) continue
+  const a = answersOf(r.client.id)
+  const p = generated(`prog-${r.client.id}`, r.client.id, r.goal, a.experience, a.training_days, a.train_location)
+  programs.set(p.id, { ...p, assigned: true, weeks: r.weeks, start_date: addDays(WEEK_START, -(r.week - 1) * 7) })
+}
+{
+  const t = generated('tpl-fat-loss', null, 'fat_loss', 'beginner', 3, 'gym')
+  programs.set(t.id, { ...t, name: 'Fat loss starter: full body, 3 days' })
+}
+
+/** Names of workouts taken out of a program that logged sessions still point at. */
+const retiredWorkouts = new Map<string, string>()
+
+function workoutNameOf(id: string): string | null {
+  for (const p of programs.values()) {
+    const w = p.workouts.find((x) => x.id === id)
+    if (w) return w.name
+  }
+  return retiredWorkouts.get(id) ?? null
+}
+
+const statusOf = (p: DemoProgram) => programStatus({ is_template: p.is_template, assigned: p.assigned, start_date: p.start_date, weeks: p.weeks }, TODAY)
+
+function currentProgram(clientId: string): DemoProgram | null {
+  return [...programs.values()]
+    .filter((p) => p.client_id === clientId && p.assigned && p.start_date && p.start_date <= TODAY)
+    .sort((a, b) => b.start_date!.localeCompare(a.start_date!))[0] ?? null
+}
+
+function upcomingProgram(clientId: string): DemoProgram | null {
+  return [...programs.values()]
+    .filter((p) => p.client_id === clientId && p.assigned && p.start_date && p.start_date > TODAY)
+    .sort((a, b) => a.start_date!.localeCompare(b.start_date!))[0] ?? null
+}
+
+function nextProgram(clientId: string): NextProgram | null {
+  const p = upcomingProgram(clientId)
+  return p ? { name: p.name, start_date: p.start_date! } : null
+}
+
+/** A program's workouts as the client's Train tab plans them. */
+function planOf(p: DemoProgram): PlanTemplate[] {
+  return p.workouts.map((w) => ({
+    id: w.id!, name: w.name, day_of_week: w.day_of_week, notes: w.notes || null,
+    exercises: w.exercises.map((x): PlannedExercise => ({
+      template_exercise_id: x.id!, exercise_id: x.exercise_id, name: x.name, sets: x.sets, reps: x.reps, rpe: x.rpe,
+      rest_seconds: x.rest_seconds, cue: exerciseById.get(x.exercise_id)?.cue ?? null, notes: x.notes || null,
+    })),
+  }))
+}
+
+function planWorkout(id: string | null): PlanTemplate | undefined {
+  if (!id) return undefined
+  for (const p of programs.values()) {
+    const t = planOf(p).find((w) => w.id === id)
+    if (t) return t
+  }
+  return undefined
+}
+
+function toProgram(p: DemoProgram): Program {
+  const status = statusOf(p)
+  return {
+    id: p.id, client_id: p.client_id, name: p.name, weeks: p.weeks, goal: p.goal, level: p.level, days_per_week: p.days_per_week,
+    status, start_date: p.start_date, draft_start: p.draft_start,
+    week: status === 'active' ? programWeekOf(p.start_date!, TODAY) : null,
+    workouts: structuredClone(p.workouts),
+  }
+}
+
+function demoProgram(id: string): DemoProgram {
+  const p = programs.get(id)
+  if (!p) throw new ApiError(404, "That program doesn't exist.")
+  return p
+}
+
 // ---------- Messages ----------
 // Aisha's conversation with the coach (with last week's check-in feedback),
 // plus short threads with Priya (2 unread) and Marco.
@@ -417,7 +548,7 @@ export const demo = {
       // Demo data is Aisha's week, shown under the signed-in person's name.
       me: { ...(signedIn() ?? aisha), body_model: bodyModel },
       coach,
-      program: { week: 6, weeks: 12, start_date: '2026-08-24', has_program: true },
+      program: { week: 6, weeks: currentProgram(aisha.id)?.weeks ?? null, start_date: '2026-08-24', has_program: !!currentProgram(aisha.id), next: nextProgram(aisha.id) },
       days,
       week: { workouts_done: done, workouts_planned: 4, meals_on_plan: 17, meals_planned: 20, avg_protein_g: 128 },
       check_in: { status: checkin.status, minutes: 4, next_date: null },
@@ -440,9 +571,11 @@ export const demo = {
   trainWeek(): TrainWeek {
     const open = openSession()
     const all = [...sessions.values()]
+    const current = currentProgram(aisha.id)
     return {
-      today: TODAY, week: 6, weeks: 12, body_model: bodyModel, sets, has_program: true, units: 'metric',
-      plan: weekPlan(templates, all.map((s) => ({ id: s.id, workout_template_id: s.template_id, performed_on: s.performed_on, finished: s.finished_at != null })), TODAY, PROGRAM_START),
+      today: TODAY, week: 6, weeks: current?.weeks ?? null, body_model: bodyModel, sets, has_program: !!current, units: 'metric',
+      next_program: nextProgram(aisha.id),
+      plan: weekPlan(current ? planOf(current) : [], all.map((s) => ({ id: s.id, workout_template_id: s.template_id, performed_on: s.performed_on, finished: s.finished_at != null })), TODAY, current?.start_date ?? PROGRAM_START),
       open_workout: open ? { id: open.id, name: sessionName(open), performed_on: open.performed_on, started_at: open.started_at, sets_done: open.sets.length } : null,
       recent: all.filter((s) => s.finished_at).sort((a, b) => b.performed_on.localeCompare(a.performed_on)).slice(0, 5).map(sessionSummary),
     }
@@ -466,8 +599,8 @@ export const demo = {
     return {
       id: s.id, name: sessionName(s), template_id: s.template_id, performed_on: s.performed_on, started_at: s.started_at,
       finished_at: s.finished_at, duration_min: s.duration_min, notes: s.notes, units: 'metric',
-      coach_notes: templates.find((t) => t.id === s.template_id)?.notes ?? null,
-      plan: templates.find((t) => t.id === s.template_id)?.exercises ?? [],
+      coach_notes: planWorkout(s.template_id)?.notes ?? null,
+      plan: planWorkout(s.template_id)?.exercises ?? [],
       sets: s.sets.map((x) => ({ ...x })),
     }
   },
@@ -753,9 +886,15 @@ export const demo = {
       client: r.client, email: `${r.client.first_name.toLowerCase()}@example.com`, setup_done: true, goal: r.goal,
       start_date: addDays(WEEK_START, -(r.week - 1) * 7), week: r.week, date_of_birth: '1996-03-14', height_cm: 165,
       start_weight_kg: r.weight_trend[0] ?? null, goal_weight_kg: r.client.id === aisha.id ? 68 : null, check_in_day: 0,
-      experience: 'intermediate', training_days: 4, train_location: 'gym', injuries: r.client.id === aisha.id ? 'Lower back gets tight after heavy deadlifts.' : null,
-      diet: 'none', foods_to_avoid: null, meals_per_day: 4,
+      ...answersOf(r.client.id), diet: 'none', foods_to_avoid: null, meals_per_day: 4,
       targets: demoTargets[clientId] ?? { ...targets }, targets_from: '2026-08-24',
+      program: (() => {
+        const p = currentProgram(clientId) ?? upcomingProgram(clientId)
+        if (!p) return null
+        const status = statusOf(p)
+        return { id: p.id, name: p.name, status, week: status === 'active' ? programWeekOf(p.start_date!, TODAY) : null, weeks: p.weeks, start_date: p.start_date }
+      })(),
+      draft_program_id: [...programs.values()].find((p) => p.client_id === clientId && !p.assigned && !p.is_template)?.id ?? null,
     }
   },
 
@@ -832,6 +971,89 @@ export const demo = {
       question: prev ? null : checkin.question,
       feedback: messages.filter((m) => m.check_in_id === id).map((m) => demoChat(m, aisha.id)),
     }
+  },
+
+  // ----- programs -----
+  programClients(): ProgramClientRow[] {
+    return roster.map((r): ProgramClientRow => {
+      const a = answersOf(r.client.id)
+      const cur = currentProgram(r.client.id)
+      const next = upcomingProgram(r.client.id)
+      const draft = [...programs.values()].find((p) => p.client_id === r.client.id && !p.assigned)
+      return {
+        client: r.client, setup_done: true, goal: r.goal, experience: a.experience, training_days: a.training_days,
+        train_location: a.train_location, injuries: a.injuries,
+        current: cur ? { id: cur.id, name: cur.name, week: programWeekOf(cur.start_date!, TODAY), weeks: cur.weeks, start_date: cur.start_date! } : null,
+        upcoming: next ? { id: next.id, name: next.name, start_date: next.start_date! } : null,
+        draft: draft ? { id: draft.id, name: draft.name } : null,
+      }
+    }).sort((a, b) => a.client.full_name.localeCompare(b.client.full_name))
+  },
+
+  programTemplates(): ProgramTemplateRow[] {
+    return [...programs.values()].filter((p) => p.is_template).sort((a, b) => a.name.localeCompare(b.name)).map((p) => ({
+      id: p.id, name: p.name, goal: p.goal, level: p.level, days_per_week: p.days_per_week, weeks: p.weeks, workouts: p.workouts.length,
+    }))
+  },
+
+  program(id: string): Program {
+    return toProgram(demoProgram(id))
+  },
+
+  saveProgram(p: Program) {
+    const id = p.id ?? `prog-${crypto.randomUUID().slice(0, 8)}`
+    const before = p.id ? demoProgram(p.id) : null
+    const loggedSlots = new Set([...sessions.values()].flatMap((x) => x.sets.map((l) => `${l.template_exercise_id}|${l.exercise_id}`)))
+    const workouts = p.workouts.map((w) => ({
+      ...w,
+      exercises: w.exercises.map((x) => {
+        // Sets logged against a slot's old exercise keep that slot; the plan gets a new one (as in save_program).
+        const old = before?.workouts.flatMap((bw) => bw.exercises).find((bx) => bx.id === x.id)
+        return old && old.exercise_id !== x.exercise_id && loggedSlots.has(`${old.id}|${old.exercise_id}`) ? { ...x, id: null } : x
+      }),
+    }))
+    for (const w of before?.workouts ?? []) {
+      if (!workouts.some((x) => x.id === w.id) && [...sessions.values()].some((x) => x.template_id === w.id)) retiredWorkouts.set(w.id!, w.name)
+    }
+    programs.set(id, {
+      id, client_id: p.client_id, is_template: p.client_id == null, assigned: before?.assigned ?? false, name: p.name.trim(), weeks: p.weeks,
+      goal: p.goal, level: p.level, days_per_week: p.workouts.filter((w) => w.day_of_week != null).length || null,
+      start_date: before?.start_date ?? null, draft_start: before?.assigned ? null : p.draft_start,
+      workouts: withIds(id, workouts),
+    })
+    return { id }
+  },
+
+  assignProgram(id: string, start: string) {
+    const p = demoProgram(id)
+    if (p.is_template) throw new ApiError(409, 'Templates are copied to a client first.')
+    if (start < TODAY) throw new ApiError(409, 'Pick a start date from today on.')
+    const monday = addDays(start, -((new Date(`${start}T00:00:00`).getDay() + 6) % 7))
+    for (const q of programs.values()) {
+      if (q.id === p.id || q.client_id !== p.client_id || !q.start_date) continue
+      const qMonday = addDays(q.start_date, -((new Date(`${q.start_date}T00:00:00`).getDay() + 6) % 7))
+      if (qMonday >= monday) q.start_date = null // replaced before it began
+      else if (addDays(qMonday, q.weeks * 7) > monday) q.weeks = Math.round((new Date(`${monday}T00:00:00`).getTime() - new Date(`${qMonday}T00:00:00`).getTime()) / (7 * 86_400_000))
+    }
+    Object.assign(p, { assigned: true, start_date: start, draft_start: null })
+    return { ok: true }
+  },
+
+  copyProgram(id: string, clientId: string | null) {
+    const src = demoProgram(id)
+    const nid = `${clientId ? 'prog' : 'tpl'}-${crypto.randomUUID().slice(0, 8)}`
+    programs.set(nid, {
+      ...structuredClone(src), id: nid, client_id: clientId, is_template: clientId == null, assigned: false, start_date: null, draft_start: null,
+      workouts: withIds(nid, src.workouts.map((w) => ({ ...w, id: null, exercises: w.exercises.map((x) => ({ ...x, id: null })) }))),
+    })
+    return { id: nid }
+  },
+
+  deleteProgram(id: string) {
+    const p = demoProgram(id)
+    if (p.assigned && !p.is_template) throw new ApiError(409, 'Only drafts and templates can be deleted. An assigned program keeps its history.')
+    programs.delete(id)
+    return { ok: true }
   },
 
   /** Only Aisha (the demo client) has a workout log. */

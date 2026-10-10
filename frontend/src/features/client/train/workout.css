@@ -57,3 +57,5 @@
   .set-row { grid-template-columns: 22px minmax(0, 1fr) minmax(0, 1fr) minmax(0, 0.8fr) 44px; gap: 6px; padding: 4px 2px; }
   .set-input { font-size: 16px; padding: 0 4px; }
 }
+.ex-coach-note { margin-top: 6px; color: var(--ink); }
+.ex-coach-note b { color: var(--mint-ink); }

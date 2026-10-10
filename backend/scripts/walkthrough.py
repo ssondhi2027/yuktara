@@ -357,7 +357,7 @@ check(
     f"new targets start Monday {next_monday}",
 )
 
-step("Coach assigns a program; client logs today's workout (one swap, RPE) and one of their own; coach sees both")
+step("Coach generates a program from the client's answers, edits it, assigns it; client logs today's workout")
 names = ["Back squat", "Goblet squat", "Romanian deadlift", "Push-up", "Lat pulldown"]
 ex = {
     r["name"]: r["id"]
@@ -366,51 +366,100 @@ ex = {
 check(len(ex) == len(names), "client sees the shared exercise library")
 dow = today.isoweekday() % 7  # Postgres numbering, Sunday = 0
 monday = (today - timedelta(days=today.weekday())).isoformat()
-program = coach.write(
-    "POST",
-    "programs",
-    {"coach_id": coach.id, "client_id": client.id, "name": "Walkthrough block", "start_date": str(today), "weeks": 8},
-).json()[0]
-template = coach.write(
-    "POST",
-    "workout_templates",
-    {"program_id": program["id"], "name": "Lower A", "day_of_week": dow, "notes": "Keep the RDLs light."},
-).json()[0]
-slots = coach.write(
-    "POST",
-    "template_exercises",
-    [
+
+# The builder's "Create program": the same generator (frontend/src/lib/programGen.ts), run with Node.
+answers = coach.get(
+    "client_profiles", select="goal,experience,training_days,train_location", user_id=f"eq.{client.id}"
+)[0]
+library = [
+    {
+        "id": r["id"],
+        "name": r["name"],
+        "level": r["level"],
+        "equipment": r["equipment"] or "",
+        "primary": [m["muscle"] for m in r["exercise_muscles"] if m["role"] == "primary"],
+        "secondary": [m["muscle"] for m in r["exercise_muscles"] if m["role"] == "secondary"],
+    }
+    for r in coach.get("exercises", select="id,name,level,equipment,exercise_muscles(muscle,role)")
+]
+# Local dev tool, fixed command, no user input.
+gen = json.loads(
+    subprocess.run(
+        ["node", "--experimental-strip-types", "--no-warnings", "scripts/generate-program.mts"],  # noqa: S607
+        input=json.dumps({"input": answers, "library": library}),
+        capture_output=True,
+        text=True,
+        cwd="../frontend",
+        check=True,
+    ).stdout
+)
+library_ids = {e["id"] for e in library}
+check(
+    len(gen["workouts"]) == answers["training_days"]
+    and all(x["exercise_id"] in library_ids for w in gen["workouts"] for x in w["exercises"]),
+    f'generated "{gen["name"]}" from {answers["goal"]}, {answers["experience"]}, {answers["training_days"]} days, '
+    f"{answers['train_location']} ({sum(len(w['exercises']) for w in gen['workouts'])} library exercises)",
+)
+lower = next(w for w in gen["workouts"] if w["name"] == "Lower A")
+lower["day_of_week"] = dow  # the coach moves Lower A to today
+lower["exercises"][1].update(sets=2, reps="10", rpe=7, notes="Keep the RDLs light.")  # and edits one exercise
+body = {
+    "client_id": client.id,
+    "name": gen["name"],
+    "weeks": gen["weeks"],
+    "goal": gen["goal"],
+    "level": gen["level"],
+    "days_per_week": gen["days_per_week"],
+    "draft_start": str(today),
+    "workouts": [
         {
-            "workout_template_id": template["id"],
-            "exercise_id": ex["Back squat"],
-            "position": 0,
-            "target_sets": 3,
-            "target_reps": "6-8",
-            "target_rpe": 8,
-            "rest_seconds": 150,
-        },
-        {
-            "workout_template_id": template["id"],
-            "exercise_id": ex["Romanian deadlift"],
-            "position": 1,
-            "target_sets": 2,
-            "target_reps": "10",
-            "target_rpe": 7,
-            "rest_seconds": 120,
-        },
+            "name": w["name"],
+            "day_of_week": w["day_of_week"],
+            "notes": w["notes"],
+            "exercises": [
+                {
+                    "exercise_id": x["exercise_id"],
+                    "target_sets": x["sets"],
+                    "target_reps": x["reps"],
+                    "target_rpe": x["rpe"],
+                    "rest_seconds": x["rest_seconds"],
+                    "notes": x["notes"],
+                }
+                for x in w["exercises"]
+            ],
+        }
+        for w in gen["workouts"]
     ],
-).json()
-squat_slot, rdl_slot = slots[0]["id"], slots[1]["id"]
+}
+r = coach.rpc("save_program", {"p": body})
+check(r.status_code == 200, "coach saves the draft (save_program)")
+program_id = r.json()
+check(client.get("programs", select="id", id=f"eq.{program_id}") == [], "the client can't see the draft")
+r = coach.rpc("assign_program", {"program": program_id, "start": str(today)})
+check(r.status_code in (200, 204), "coach assigns it from today")
+
+# The client's Train tab: latest started program, removed workouts and exercises left out (as lib/live/client.ts).
 plan = client.get(
     "programs",
-    select="id,workout_templates(id,name,day_of_week,template_exercises(id,target_sets,target_reps,target_rpe))",
+    select="id,name,workout_templates(id,name,day_of_week,template_exercises(id,exercise_id,position,target_sets,"
+    "target_reps,target_rpe,notes))",
     client_id=f"eq.{client.id}",
+    start_date=f"lte.{today}",
+    order="start_date.desc",
+    limit="1",
+    **{"workout_templates.removed_at": "is.null", "workout_templates.template_exercises.removed_at": "is.null"},
 )
+check(plan and plan[0]["id"] == program_id, f'client\'s current program is "{plan[0]["name"]}"')
+template = next(w for w in plan[0]["workout_templates"] if w["day_of_week"] == dow and w["name"] == "Lower A")
+slots = sorted(template["template_exercises"], key=lambda x: x["position"])
 check(
-    plan[0]["workout_templates"][0]["day_of_week"] == dow
-    and len(plan[0]["workout_templates"][0]["template_exercises"]) == 2,
-    "client sees today's planned workout with the coach's targets",
+    slots[0]["exercise_id"] == ex["Back squat"]
+    and slots[1]["exercise_id"] == ex["Romanian deadlift"]
+    and slots[1]["target_sets"] == 2
+    and slots[1]["notes"] == "Keep the RDLs light.",
+    "client sees today's workout (Lower A: back squat, then the edited RDL, 2 x 10)",
 )
+squat_slot, rdl_slot = slots[0]["id"], slots[1]["id"]
 
 
 def start_session(template_id: str | None) -> httpx.Response:
@@ -517,6 +566,14 @@ done_this_week = coach.get(
     "workout_sessions", select="status", client_id=f"eq.{client.id}", performed_on=f"gte.{monday}", status="eq.done"
 )
 check(len(done_this_week) == 2, "dashboard's 'done this week' count comes from the real logs")
+r = coach.rpc("copy_program", {"source": program_id, "client": None})
+check(r.status_code == 200, "coach saves the program as a template")
+tpl = coach.get("programs", select="id,is_template,client_id,goal,workout_templates(count)", id=f"eq.{r.json()}")[0]
+check(
+    tpl["is_template"] and tpl["client_id"] is None and tpl["workout_templates"][0]["count"] == len(gen["workouts"]),
+    f"the template has all {len(gen['workouts'])} workouts and the goal ({tpl['goal']})",
+)
+check(client.get("programs", select="id", id=f"eq.{tpl['id']}") == [], "the client can't see the coach's templates")
 
 step("Client and coach message each other; unread counts and read state; feedback is in the same thread")
 MESSAGE_COLS = "id,body,created_at,sender_id,check_in_id,read_at,check_ins(week_start)"
@@ -626,12 +683,15 @@ client_queries = [
         "programs",
         {
             "select": "id,name,start_date,weeks,workout_templates(id,name,day_of_week,position,notes,"
-            "template_exercises(id,position,target_sets,target_reps,target_rpe,rest_seconds,exercise_id,"
+            "template_exercises(id,position,target_sets,target_reps,target_rpe,rest_seconds,notes,exercise_id,"
             "exercises(name,cue)))",
             "client_id": f"eq.{client.id}",
             "start_date": f"lte.{today}",
+            "workout_templates.removed_at": "is.null",
+            "workout_templates.template_exercises.removed_at": "is.null",
         },
     ),
+    ("programs", {"select": "name,start_date", "client_id": f"eq.{client.id}", "start_date": f"gt.{today}"}),
     (
         "exercise_swaps",
         {
@@ -757,6 +817,34 @@ coach_queries = [
     ),
     ("review_drafts", {"select": "body,updated_at", "check_in_id": f"eq.{ci}"}),
     ("users", {"select": "id,full_name,invite_code", "id": f"eq.{coach.id}"}),
+    (
+        "client_profiles",
+        {
+            "select": "user_id,goal,experience,training_days,train_location,injuries,setup_completed_at",
+            "coach_id": f"eq.{coach.id}",
+        },
+    ),
+    (
+        "programs",
+        {"select": "id,client_id,is_template,name,weeks,start_date,assigned_at", "client_id": f"in.({client.id})"},
+    ),
+    (
+        "programs",
+        {
+            "select": "id,name,goal,level,days_per_week,weeks,workout_templates(count)",
+            "coach_id": f"eq.{coach.id}",
+            "is_template": "eq.true",
+        },
+    ),
+    (
+        "programs",
+        {
+            "select": "id,client_id,is_template,name,weeks,goal,level,days_per_week,start_date,assigned_at,draft_start,"
+            "workout_templates(id,name,day_of_week,position,notes,removed_at,template_exercises(id,exercise_id,position,"
+            "target_sets,target_reps,target_rpe,rest_seconds,notes,removed_at,exercises(name)))",
+            "id": f"eq.{program_id}",
+        },
+    ),
     ("client_profiles", {"select": "user_id", "user_id": f"eq.{client.id}", "coach_id": f"eq.{coach.id}"}),
     ("messages", {"select": MESSAGE_COLS, "client_id": f"eq.{client.id}", "order": "created_at.desc", "limit": "300"}),
 ]

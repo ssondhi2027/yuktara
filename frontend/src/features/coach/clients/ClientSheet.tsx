@@ -59,6 +59,27 @@ export function ClientSheet({ clientId, onClose }: { clientId: string; onClose: 
       <Link to={`/coach/messages/${clientId}`} className="btn btn-ghost btn-sm" style={{ alignSelf: 'flex-start' }}>
         <MessageSquare size={16} /> Message {c.client.first_name}
       </Link>
+      <section className="sheet-program">
+        <div className="xs muted">Program</div>
+        {c.program ? (
+          <div className="between" style={{ gap: 12 }}>
+            <span className="small">
+              <b>{c.program.name}</b>
+              {c.program.status === 'active' && ` · week ${Math.min(c.program.week ?? 1, c.program.weeks)} of ${c.program.weeks}`}
+              {c.program.status === 'upcoming' && c.program.start_date && ` · starts ${monthDay(c.program.start_date)}`}
+              {c.program.status === 'ended' && ' · ended'}
+            </span>
+            <Link to={`/coach/programs/${c.program.id}`} className="btn btn-ghost btn-sm">Edit program</Link>
+          </div>
+        ) : (
+          <div className="between" style={{ gap: 12 }}>
+            <span className="small muted">{c.draft_program_id ? 'A draft is ready, not assigned yet.' : 'No program yet.'}</span>
+            <Link to={c.draft_program_id ? `/coach/programs/${c.draft_program_id}` : `/coach/programs/new/${clientId}`} className="btn btn-primary btn-sm">
+              {c.draft_program_id ? 'Open draft' : `Create program for ${c.client.first_name}`}
+            </Link>
+          </div>
+        )}
+      </section>
       {!c.setup_done && <div className="auth-note ok">Signed up, but hasn't finished profile setup yet.</div>}
       <dl className="answers-list">
         {rows.filter(([, v]) => v).map(([k, v]) => (

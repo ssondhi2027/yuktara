@@ -214,9 +214,11 @@ function WorkoutCard({ h, compact, desktop }: { h: ClientHome; compact: boolean;
           </>
         ) : (
           <>
-            <h3 style={{ marginTop: 6 }}>No plan yet</h3>
+            <h3 style={{ marginTop: 6 }}>{h.program.next ? 'Plan starts soon' : 'No plan yet'}</h3>
             <p className="muted small" style={{ marginTop: 6 }}>
-              {h.coach ? `${h.coach.first_name} is setting up your training plan.` : 'Your coach will set up your training plan.'}
+              {h.program.next
+                ? `${h.program.next.name} starts ${weekday(h.program.next.start_date)}, ${monthDay(h.program.next.start_date)}.`
+                : h.coach ? `${h.coach.first_name} is setting up your training plan.` : 'Your coach will set up your training plan.'}
             </p>
           </>
         )}

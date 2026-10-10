@@ -88,6 +88,7 @@ Errors always look like `{"error": {"code", "message"}, "request_id"}`. Validati
   - **Client:** reading every screen, logging meals (`meal_logs`), habits and the day rating (`daily_logs`), saving the check-in draft (`check_ins`), the body model, and workouts (`workout_sessions`, `set_logs`: start, save each set as it's ticked, finish, discard).
   - **Coach:** the dashboard, check-in lists and review screens; first targets (`nutrition_targets`); review drafts (`review_drafts`); private notes (`set_coach_notes`); a client's logged workouts, read-only (client sheet).
   - **Both:** messages (`messages`): reading a conversation, sending, marking read; plus `message_threads()` (the coach's conversation list) and `unread_message_count()` (nav badges).
+  - **Coach programs:** reading programs and templates directly; saving, assigning and copying through database functions (`save_program`, `assign_program`, `copy_program`, 0015), each one transaction run as the coach (RLS). They change several tables, but need no API: RLS already expresses who may do what, and one round trip is faster than going through Render.
 - **Through this API** (several tables at once): submitting a check-in, reviewing one (its feedback becomes a message with `check_in_id`), exercise swaps, photo upload links, invite codes.
 - **Coach freshness:**
   - Coach screens refetch every 30 s and when the window regains focus (`COACH_REFRESH` in `frontend/src/lib/api.ts`).

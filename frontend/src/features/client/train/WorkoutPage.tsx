@@ -263,6 +263,7 @@ function Logger({ log, library }: { log: WorkoutLog; library: LibraryExercise[] 
                   </button>
                 )}
               </div>
+              {c.slot?.notes && <p className="small ex-coach-note"><b>Coach:</b> {c.slot.notes}</p>}
               {(e?.cue ?? c.slot?.cue) && <p className="xs muted ex-cue-line">{e?.cue ?? c.slot?.cue}</p>}
               <p className="xs last-time">
                 {lastTime ? <>Last time ({monthDay(lastTime.date)}): {setsLine(lastTime.sets, units)}</> : 'First time logging this one.'}
