@@ -10,6 +10,8 @@ import { LineChart } from '@/components/charts/LineChart'
 import { PairBars, ScaleBar } from '@/components/charts/Bars'
 import { PageError, PageLoading } from '@/components/ui/Loading'
 import { GOAL_LABEL } from '@/lib/labels'
+import { bodyValue, bodyWeight, pointsIn, unitLabel } from '@/lib/units'
+import { useUnits } from '@/app/auth'
 import { FeedbackBox } from './Feedback'
 import { CoachAnswers, StatTiles } from './ReviewCompact'
 import { EMPTY_TARGETS, TargetsForm } from '@/features/coach/clients/TargetsForm'
@@ -26,6 +28,7 @@ export function ReviewFull({ id }: { id: string }) {
 }
 
 function Review({ r, tab, setTab }: { r: CheckinReview; tab: (typeof TABS)[number]; setTab: (t: (typeof TABS)[number]) => void }) {
+  const units = useUnits()
   // null = leave targets as they are; set = new targets from next Monday
   const [targets, setTargets] = useState<Targets | null>(r.targets)
   const status = r.status == null ? null : r.status === 'on_track' ? 'on_track' : r.status === 'slipping' ? 'slipping' : 'overdue'
@@ -109,17 +112,18 @@ function Review({ r, tab, setTab }: { r: CheckinReview; tab: (typeof TABS)[numbe
                 <h2>Weight across the program</h2>
                 {r.projection_kg != null && (
                   <span className="small muted">
-                    On pace for <b style={{ color: 'var(--ink)' }}>{r.projection_kg} kg</b> by week {r.weeks}{r.goal_kg != null ? ` · goal ${r.goal_kg} kg` : ''}
+                    On pace for <b style={{ color: 'var(--ink)' }}>{bodyWeight(r.projection_kg, units)}</b> by week {r.weeks}{r.goal_kg != null ? ` · goal ${bodyWeight(r.goal_kg, units)}` : ''}
                   </span>
                 )}
               </div>
               {r.weights.some((w) => w.kg != null) ? (
                 <>
-                  <LineChart points={r.weights} goal={r.goal_kg ?? undefined} projection={r.projection_kg ?? undefined} area={false} height={200} highlight={`W${r.week}`} />
+                  <LineChart points={pointsIn(r.weights, units)} unit={unitLabel(units)} goal={r.goal_kg != null ? bodyValue(r.goal_kg, units) : undefined}
+                    projection={r.projection_kg != null ? bodyValue(r.projection_kg, units) : undefined} area={false} height={200} highlight={`W${r.week}`} />
                   <div className="legend-line xs muted">
                     <span><i className="ll solid" /> Weekly average</span>
                     {r.projection_kg != null && <span><i className="ll dashed" /> At current pace</span>}
-                    {r.goal_kg != null && <span><i className="ll goal" /> Goal {r.goal_kg} kg</span>}
+                    {r.goal_kg != null && <span><i className="ll goal" /> Goal {bodyWeight(r.goal_kg, units)}</span>}
                   </div>
                 </>
               ) : (

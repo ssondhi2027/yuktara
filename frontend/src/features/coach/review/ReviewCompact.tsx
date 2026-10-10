@@ -1,7 +1,8 @@
 import { useQuery } from '@tanstack/react-query'
 import { api, COACH_REFRESH, type CheckinReview } from '@/lib/api'
 import { clockTime } from '@/lib/dates'
-import { cmToIn, delta, inches } from '@/lib/units'
+import { bodyWeight, cmToIn, delta, inches, weightChange } from '@/lib/units'
+import { useUnits } from '@/app/auth'
 import { Avatar } from '@/components/ui/Avatar'
 import { PageError } from '@/components/ui/Loading'
 import { GOAL_LABEL } from '@/lib/labels'
@@ -41,10 +42,11 @@ export function ReviewCompact({ id }: { id: string }) {
 }
 
 export function StatTiles({ r, inset }: { r: CheckinReview; inset?: boolean }) {
+  const units = useUnits()
   const tiles = [
     {
-      label: 'Average weight', value: r.avg_weight_kg != null ? `${r.avg_weight_kg} kg` : '—',
-      sub: r.weight_change != null ? delta(r.weight_change) : 'First check-in', tone: r.weight_change != null && r.weight_change > 0 ? 'bad' : 'good',
+      label: 'Average weight', value: r.avg_weight_kg != null ? bodyWeight(r.avg_weight_kg, units) : '—',
+      sub: r.weight_change != null ? weightChange(r.weight_change, units) : 'First check-in', tone: r.weight_change != null && r.weight_change > 0 ? 'bad' : 'good',
     },
     {
       label: 'Waist', value: r.waist_cm != null ? inches(r.waist_cm) : '—',

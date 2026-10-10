@@ -33,7 +33,7 @@ type Draft = Omit<SetupAnswers, 'body_model' | 'goal' | 'experience'> & {
 }
 
 const EMPTY: Draft = {
-  date_of_birth: '', body_model: null, units: 'metric', height: '', phone: '',
+  date_of_birth: '', body_model: null, units: 'imperial', height: '', phone: '',
   goal: null, weight: '', goal_weight: '', check_in_day: 0,
   experience: null, training_days: 3, train_location: 'gym', injuries: '',
   diet: 'none', foods_to_avoid: '', meals_per_day: 3, cleared_to_exercise: false,
@@ -182,8 +182,8 @@ export function SetupSheet({ email, fullName, coachFirstName, justCreated, justC
                   <fieldset className="setup-field">
                     <legend>Units</legend>
                     <div className="opt-grid two">
-                      {opt('units', 'metric', 'kg and cm')}
                       {opt('units', 'imperial', 'lb and in')}
+                      {opt('units', 'metric', 'kg and cm')}
                     </div>
                   </fieldset>
                   <div className="opt-grid two gap10">

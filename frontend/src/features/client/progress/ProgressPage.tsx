@@ -2,7 +2,8 @@ import { Link } from 'react-router'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '@/lib/api'
 import { monthDay } from '@/lib/dates'
-import { cmToIn, delta, inches } from '@/lib/units'
+import { bodyValue, bodyWeight, cmToIn, delta, inches, loadWeight, pointsIn, unitLabel, weightChange } from '@/lib/units'
+import { useUnits } from '@/app/auth'
 import { LineChart } from '@/components/charts/LineChart'
 import { PlanBars } from '@/components/charts/Bars'
 import { PageError, PageLoading } from '@/components/ui/Loading'
@@ -10,6 +11,7 @@ import './progress.css'
 
 export function ProgressPage() {
   const { data: p, error, isPending } = useQuery({ queryKey: ['progress'], queryFn: api.progress })
+  const units = useUnits()
   if (isPending) return <PageLoading />
   if (error) return <PageError error={error} />
 
@@ -30,15 +32,16 @@ export function ProgressPage() {
           <div className="between" style={{ alignItems: 'flex-start' }}>
             <div>
               <div className="muted">Weekly average weight</div>
-              <b className="num big">{p.weight.current != null ? `${p.weight.current} kg` : '—'}</b>
+              <b className="num big">{p.weight.current != null ? bodyWeight(p.weight.current, units) : '—'}</b>
             </div>
-            {p.weight.change != null && <span className="pill good lg-pill">{delta(p.weight.change)} since {since}</span>}
+            {p.weight.change != null && <span className="pill good lg-pill">{weightChange(p.weight.change, units)} since {since}</span>}
           </div>
           {hasWeights ? (
             <LineChart
-              points={p.weight.points}
-              goal={p.weight.goal ?? undefined}
-              goalLabel={p.weight.goal != null ? `Goal ${p.weight.goal} kg` : undefined}
+              points={pointsIn(p.weight.points, units)}
+              unit={unitLabel(units)}
+              goal={p.weight.goal != null ? bodyValue(p.weight.goal, units) : undefined}
+              goalLabel={p.weight.goal != null ? `Goal ${bodyWeight(p.weight.goal, units)}` : undefined}
               height={220}
             />
           ) : (
@@ -74,8 +77,8 @@ export function ProgressPage() {
             {p.lift ? (
               <>
                 <div className="muted">{p.lift.exercise}, {p.lift.reps} reps</div>
-                <b className="num">{p.lift.kg} kg</b>
-                <span className="good small strong-600">{delta(p.lift.change)} since your first session</span>
+                <b className="num">{loadWeight(p.lift.kg, units)}</b>
+                <span className="good small strong-600">{weightChange(p.lift.change, units)} since your first session</span>
               </>
             ) : (
               <>

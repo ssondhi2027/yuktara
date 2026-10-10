@@ -6,12 +6,15 @@ import { api, type Targets } from '@/lib/api'
 import { monthDay } from '@/lib/dates'
 import { DIET_LABEL, EXPERIENCE_LABEL, GOAL_LABEL, LOCATION_LABEL, MEALS_LABEL, WEEKDAY_LABEL } from '@/lib/labels'
 import { Sheet } from '@/components/ui/Sheet'
+import { useUnits } from '@/app/auth'
+import { bodyWeight } from '@/lib/units'
 import { EMPTY_TARGETS, TargetsForm, targetsProblem } from './TargetsForm'
 import { ClientWorkouts } from './ClientWorkouts'
 
 /** A client's setup answers, plus the coach's targets for them (nutrition_targets, from today). */
 export function ClientSheet({ clientId, onClose }: { clientId: string; onClose: () => void }) {
   const qc = useQueryClient()
+  const units = useUnits()
   const { data: c, error } = useQuery({ queryKey: ['client-detail', clientId], queryFn: () => api.clientDetail(clientId) })
   const [targets, setTargets] = useState<Targets>(EMPTY_TARGETS)
   const [problem, setProblem] = useState<string | null>(null)
@@ -43,7 +46,7 @@ export function ClientSheet({ clientId, onClose }: { clientId: string; onClose: 
     ['Email', c.email],
     ['Started', `${monthDay(c.start_date)} · week ${c.week}`],
     ['Goal', c.goal ? GOAL_LABEL[c.goal] : null],
-    ['Weight', c.start_weight_kg != null ? `${c.start_weight_kg} kg${c.goal_weight_kg != null ? ` → goal ${c.goal_weight_kg} kg` : ''}` : null],
+    ['Weight', c.start_weight_kg != null ? `${bodyWeight(c.start_weight_kg, units)}${c.goal_weight_kg != null ? ` → goal ${bodyWeight(c.goal_weight_kg, units)}` : ''}` : null],
     ['Height', c.height_cm != null ? `${c.height_cm} cm` : null],
     ['Born', c.date_of_birth ? monthDay(c.date_of_birth) + ', ' + c.date_of_birth.slice(0, 4) : null],
     ['Check-in day', WEEKDAY_LABEL[c.check_in_day]],

@@ -11,6 +11,7 @@ import type {
 } from './api'
 import type { ExerciseLevel as Level, GoalType, TrainLocation } from '@/types/db'
 import { addDays, pinToday } from './dates'
+import { bodyWeight } from './units'
 import { ApiError } from './backend'
 import { minutesSince, OWN_WORKOUT, summarize, weekPlan, type PlanTemplate } from './workouts'
 import { generateProgram } from './programGen'
@@ -527,6 +528,8 @@ const messages: DemoMessage[] = [
 ]
 
 const isCoach = () => getCurrentUser()?.role === 'coach'
+/** The signed-in demo user's kg/lb choice (the avatar menu). */
+const demoUnits = () => getCurrentUser()?.units ?? 'imperial'
 const everyone = () => [coach, aisha, ...roster.map((r) => r.client)]
 
 function demoChat(m: DemoMessage, me: string): ChatMessage {
@@ -573,7 +576,7 @@ export const demo = {
     const all = [...sessions.values()]
     const current = currentProgram(aisha.id)
     return {
-      today: TODAY, week: 6, weeks: current?.weeks ?? null, body_model: bodyModel, sets, has_program: !!current, units: 'metric',
+      today: TODAY, week: 6, weeks: current?.weeks ?? null, body_model: bodyModel, sets, has_program: !!current, units: demoUnits(),
       next_program: nextProgram(aisha.id),
       plan: weekPlan(current ? planOf(current) : [], all.map((s) => ({ id: s.id, workout_template_id: s.template_id, performed_on: s.performed_on, finished: s.finished_at != null })), TODAY, current?.start_date ?? PROGRAM_START),
       open_workout: open ? { id: open.id, name: sessionName(open), performed_on: open.performed_on, started_at: open.started_at, sets_done: open.sets.length } : null,
@@ -598,7 +601,7 @@ export const demo = {
     const s = demoSession(id)
     return {
       id: s.id, name: sessionName(s), template_id: s.template_id, performed_on: s.performed_on, started_at: s.started_at,
-      finished_at: s.finished_at, duration_min: s.duration_min, notes: s.notes, units: 'metric',
+      finished_at: s.finished_at, duration_min: s.duration_min, notes: s.notes, units: demoUnits(),
       coach_notes: planWorkout(s.template_id)?.notes ?? null,
       plan: planWorkout(s.template_id)?.exercises ?? [],
       sets: s.sets.map((x) => ({ ...x })),
@@ -743,7 +746,7 @@ export const demo = {
       queue,
       attention: [
         { client: roster[2].client, status: 'slipping', text: 'Plan followed under 70% two weeks running. Sleep is down to about 5 hours.', action: 'Message Priya' },
-        { client: roster[6].client, status: 'overdue', text: "Missed last week's check-in. Weight is dropping 0.9 kg a week, faster than planned.", action: 'Message Jordan' },
+        { client: roster[6].client, status: 'overdue', text: `Missed last week's check-in. Weight is dropping ${bodyWeight(0.9, demoUnits())} a week, faster than planned.`, action: 'Message Jordan' },
         { client: roster[4].client, status: 'awaiting', text: "Week 2. Logged 2 of 7 days and hasn't checked in yet (due 8 PM).", action: 'Send a reminder' },
       ],
       clients: roster.map(({ client, goal, week, weeks, days_logged, workouts_done, workouts_planned, food_pct, weight_trend, weight_change, last_check_in, status }) => ({

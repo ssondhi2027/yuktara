@@ -4,7 +4,8 @@ import { useQuery } from '@tanstack/react-query'
 import { Copy, Plus, Search } from 'lucide-react'
 import { api, COACH_REFRESH, type ClientRow, type ClientWeekStatus, type QueueItem } from '@/lib/api'
 import { longDay } from '@/lib/dates'
-import { delta } from '@/lib/units'
+import { bodyValue, bodyWeight, delta, weightChange } from '@/lib/units'
+import { useUnits } from '@/app/auth'
 import { GOAL_LABEL } from '@/lib/labels'
 import { Avatar } from '@/components/ui/Avatar'
 import { Sheet } from '@/components/ui/Sheet'
@@ -215,8 +216,9 @@ function FilterChip({ on, onClick, children }: { on: boolean; onClick: () => voi
 }
 
 function QueueRow({ q }: { q: QueueItem }) {
+  const units = useUnits()
   const urgent = q.flags.length > 0 || q.has_question
-  const facts = [q.plan_pct != null ? `Plan ${q.plan_pct}%` : null, q.weight_change != null ? delta(q.weight_change) : null].filter(Boolean).join(' · ')
+  const facts = [q.plan_pct != null ? `Plan ${q.plan_pct}%` : null, q.weight_change != null ? weightChange(q.weight_change, units) : null].filter(Boolean).join(' · ')
   return (
     <li className="queue-row">
       <Avatar person={q.client} tone={q.flags.length ? 'peach' : undefined} />
@@ -234,6 +236,7 @@ function QueueRow({ q }: { q: QueueItem }) {
 }
 
 function ClientTr({ c, onOpen }: { c: ClientRow; onOpen: () => void }) {
+  const units = useUnits()
   const trainingLow = c.workouts_planned > 0 && c.workouts_done / c.workouts_planned < 0.6
   const foodLow = c.food_pct != null && c.food_pct < 70
   const bad = c.status === 'slipping' || c.status === 'overdue'
@@ -254,9 +257,9 @@ function ClientTr({ c, onOpen }: { c: ClientRow; onOpen: () => void }) {
       <td className={foodLow ? 'bad strong' : undefined}>{c.food_pct != null ? `${c.food_pct}%` : '—'}</td>
       <td>
         {c.weight_trend.length >= 2 ? (
-          <span className="row" style={{ gap: 10 }}><Sparkline values={c.weight_trend} tone={bad ? 'bad' : 'good'} /> {c.weight_change != null ? delta(c.weight_change) : ''}</span>
+          <span className="row" style={{ gap: 10 }}><Sparkline values={c.weight_trend.map((kg) => bodyValue(kg, units))} tone={bad ? 'bad' : 'good'} /> {c.weight_change != null ? weightChange(c.weight_change, units) : ''}</span>
         ) : (
-          <span className="muted small">{c.weight_trend.length === 1 ? `${c.weight_trend[0]} kg` : 'No weigh-ins'}</span>
+          <span className="muted small">{c.weight_trend.length === 1 ? bodyWeight(c.weight_trend[0], units) : 'No weigh-ins'}</span>
         )}
       </td>
       <td className="small">{c.last_check_in}</td>

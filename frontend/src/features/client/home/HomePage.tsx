@@ -4,8 +4,9 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Camera, Check, ClipboardCheck, Droplet, Footprints, MessageSquare, Moon, Plus, Scale, Send, Sparkles, X } from 'lucide-react'
 import { api, type ClientHome } from '@/lib/api'
 import { useLayout } from '@/app/hooks'
+import { useUnits } from '@/app/auth'
 import { greeting, longDay, monthDay, shortDay, weekday, parseDate, weekRange } from '@/lib/dates'
-import { delta, hoursMinutes, int, litres } from '@/lib/units'
+import { bodyValue, bodyWeight, delta, hoursMinutes, int, litres, loadWeight, pointsIn, toUnit, unitLabel, weightChange } from '@/lib/units'
 import { DayRing } from '@/components/charts/DayRing'
 import { LineChart } from '@/components/charts/LineChart'
 import { MacroBar } from '@/components/ui/MacroBar'
@@ -202,6 +203,7 @@ function WeekStrip({ h, desktop }: { h: ClientHome; desktop: boolean }) {
 }
 
 function WorkoutCard({ h, compact, desktop }: { h: ClientHome; compact: boolean; desktop: boolean }) {
+  const units = useUnits()
   const w = h.workout
   if (!w) {
     return (
@@ -253,7 +255,7 @@ function WorkoutCard({ h, compact, desktop }: { h: ClientHome; compact: boolean;
           <li key={e.name} className="between">
             <span>{e.name}</span>
             <span className="muted small">
-              {e.sets} × {e.reps}{e.weight_kg ? ` · ${e.weight_kg} kg` : ''}{e.note ? ` ${e.note}` : ''}
+              {e.sets} × {e.reps}{e.weight_kg ? ` · ${loadWeight(e.weight_kg, units)}` : ''}{e.note ? ` ${e.note}` : ''}
             </span>
           </li>
         ))}
@@ -322,6 +324,7 @@ function FoodCard({ h, compact, desktop }: { h: ClientHome; compact: boolean; de
 }
 
 function WeightCard({ h, desktop, onLog }: { h: ClientHome; desktop: boolean; onLog: () => void }) {
+  const units = useUnits()
   const w = h.weight
   const hasPoints = w.points.some((p) => p.kg != null)
   return (
@@ -329,7 +332,7 @@ function WeightCard({ h, desktop, onLog }: { h: ClientHome; desktop: boolean; on
       <div className="card-head">
         <h3>Weight</h3>
         {w.change != null && (
-          <span className="small good" style={{ fontWeight: 600 }}>{delta(w.change)} since {monthDay(w.start_date)}</span>
+          <span className="small good" style={{ fontWeight: 600 }}>{weightChange(w.change, units)} since {monthDay(w.start_date)}</span>
         )}
       </div>
       {!hasPoints ? (
@@ -341,17 +344,18 @@ function WeightCard({ h, desktop, onLog }: { h: ClientHome; desktop: boolean; on
         <>
           {desktop && (
             <div className="row" style={{ alignItems: 'baseline', marginBottom: 8 }}>
-              {w.current != null && <b className="num" style={{ fontSize: 30 }}>{w.current} kg</b>}
-              {w.goal != null && <span className="small good" style={{ fontWeight: 600 }}>Goal {w.goal} kg</span>}
+              {w.current != null && <b className="num" style={{ fontSize: 30 }}>{bodyWeight(w.current, units)}</b>}
+              {w.goal != null && <span className="small good" style={{ fontWeight: 600 }}>Goal {bodyWeight(w.goal, units)}</span>}
             </div>
           )}
           <LineChart
-            points={w.points}
-            goal={desktop || w.goal == null ? undefined : w.goal}
+            points={pointsIn(w.points, units)}
+            unit={unitLabel(units)}
+            goal={desktop || w.goal == null ? undefined : bodyValue(w.goal, units)}
             area={desktop}
             height={desktop ? 150 : 170}
-            goalLabel={desktop || w.goal == null ? undefined : `Goal ${w.goal} kg`}
-            valueLabel={desktop || w.current == null ? undefined : `${w.current} kg`}
+            goalLabel={desktop || w.goal == null ? undefined : `Goal ${bodyWeight(w.goal, units)}`}
+            valueLabel={desktop || w.current == null ? undefined : bodyWeight(w.current, units)}
           />
           {desktop && <p className="xs muted" style={{ marginTop: 10 }}>Weekly averages of your morning weigh-ins.</p>}
         </>
@@ -468,6 +472,7 @@ function HabitsCard({ h, onLog }: { h: ClientHome; onLog: () => void }) {
 }
 
 function BestsCard({ h }: { h: ClientHome }) {
+  const units = useUnits()
   return (
     <section className="card">
       <h3 style={{ marginBottom: 6 }}>Personal bests</h3>
@@ -479,7 +484,7 @@ function BestsCard({ h }: { h: ClientHome }) {
             {h.bests.map((b) => (
               <li key={b.exercise} className="between small">
                 <span>{b.exercise} · {b.reps} reps</span>
-                <span><b>{b.kg} kg</b> <span className="good">{delta(b.change, '')}</span></span>
+                <span><b>{loadWeight(b.kg, units)}</b> <span className="good">{delta(toUnit(b.change, units), '')}</span></span>
               </li>
             ))}
           </ul>
@@ -491,13 +496,14 @@ function BestsCard({ h }: { h: ClientHome }) {
 }
 
 function HabitTiles({ h, onLog }: { h: ClientHome; onLog: () => void }) {
+  const units = useUnits()
   const t = h.food.targets
   const x = h.habits
   const tiles = [
     { icon: <Footprints size={20} className="good" />, value: x.steps_today == null ? '—' : int(x.steps_today), sub: t?.steps ? `of ${int(t.steps)} steps` : 'steps today' },
     { icon: <Droplet size={20} className="good" />, value: x.water_ml_today == null ? '—' : litres(x.water_ml_today), sub: t?.water_ml ? `of ${litres(t.water_ml)} water` : 'water today' },
     { icon: <Moon size={20} className="good" />, value: x.sleep_last_night == null ? '—' : hoursMinutes(x.sleep_last_night), sub: 'sleep last night' },
-    { icon: <Scale size={20} className="good" />, value: x.weight_today == null ? '—' : `${x.weight_today} kg`, sub: 'weight today' },
+    { icon: <Scale size={20} className="good" />, value: x.weight_today == null ? '—' : bodyWeight(x.weight_today, units), sub: 'weight today' },
   ]
   return (
     <div className="habit-tiles four">

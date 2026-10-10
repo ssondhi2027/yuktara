@@ -3,6 +3,7 @@ import { Navigate, useLocation } from 'react-router'
 import { useQueryClient } from '@tanstack/react-query'
 import { consumeAuthRedirect, loadUser, onAuthChange, signOut as doSignOut, type AuthUser, type RedirectNotice } from '@/lib/auth'
 import { PageLoading } from '@/components/ui/Loading'
+import type { UnitSystem } from '@/types/db'
 
 interface AuthState {
   status: 'loading' | 'ready'
@@ -58,6 +59,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const clearNotice = useCallback(() => setNotice(null), [])
   return <AuthContext.Provider value={{ ...state, notice, clearNotice, refresh, signOut }}>{children}</AuthContext.Provider>
+}
+
+/** The signed-in user's kg/lb choice (pounds until they pick). */
+export function useUnits(): UnitSystem {
+  return useContext(AuthContext)?.user?.units ?? 'imperial'
 }
 
 export function useAuth() {

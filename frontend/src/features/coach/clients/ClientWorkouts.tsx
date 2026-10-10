@@ -3,9 +3,11 @@ import { api, COACH_REFRESH } from '@/lib/api'
 import { monthDay, weekday } from '@/lib/dates'
 import { MUSCLE_LABEL } from '@/lib/muscles'
 import { setsLine, volumeLabel } from '@/lib/workouts'
+import { useUnits } from '@/app/auth'
 
-/** The client's logged workouts, read-only (RLS doesn't let the coach change them). Weights shown in kg. */
+/** The client's logged workouts, read-only (RLS doesn't let the coach change them). Weights in the coach's own unit. */
 export function ClientWorkouts({ clientId, firstName }: { clientId: string; firstName: string }) {
+  const units = useUnits()
   const { data, error } = useQuery({ queryKey: ['client-workouts', clientId], queryFn: () => api.clientWorkouts(clientId), ...COACH_REFRESH })
 
   return (
@@ -26,12 +28,12 @@ export function ClientWorkouts({ clientId, firstName }: { clientId: string; firs
                   <b>{w.name}</b> <span className="small muted">· {weekday(w.performed_on)} {monthDay(w.performed_on)}</span>
                   {!w.finished && <span className="pill gold" style={{ marginLeft: 8 }}>In progress</span>}
                   <div className="xs muted">
-                    {w.sets} sets{w.volume_kg > 0 ? ` · ${volumeLabel(w.volume_kg, 'metric')}` : ''}{w.duration_min != null ? ` · ${w.duration_min} min` : ''}
+                    {w.sets} sets{w.volume_kg > 0 ? ` · ${volumeLabel(w.volume_kg, units)}` : ''}{w.duration_min != null ? ` · ${w.duration_min} min` : ''}
                     {w.muscles.length > 0 && ` · ${w.muscles.map((m) => MUSCLE_LABEL[m]).join(', ')}`}
                   </div>
                 </summary>
                 <dl className="answers-list workout-detail">
-                  {w.exercises.map((e) => <div key={e.name}><dt>{e.name}</dt><dd>{setsLine(e.sets, 'metric')}</dd></div>)}
+                  {w.exercises.map((e) => <div key={e.name}><dt>{e.name}</dt><dd>{setsLine(e.sets, units)}</dd></div>)}
                   {w.notes && <div><dt>Note</dt><dd>{w.notes}</dd></div>}
                 </dl>
               </details>

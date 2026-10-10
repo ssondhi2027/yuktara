@@ -3,7 +3,8 @@ import { useQuery } from '@tanstack/react-query'
 import { ChevronLeft } from 'lucide-react'
 import { api } from '@/lib/api'
 import { clockTime, localDay, monthDay } from '@/lib/dates'
-import { inches } from '@/lib/units'
+import { bodyWeight, inches } from '@/lib/units'
+import { useUnits } from '@/app/auth'
 import { PageError, PageLoading } from '@/components/ui/Loading'
 
 const STATUS = { due: 'Open', submitted: 'Sent, waiting for feedback', reviewed: 'Reviewed', missed: 'Missed' } as const
@@ -12,11 +13,12 @@ const STATUS = { due: 'Open', submitted: 'Sent, waiting for feedback', reviewed:
 export function CheckinSummaryPage() {
   const { id = '' } = useParams()
   const { data: c, error, isPending } = useQuery({ queryKey: ['checkin-summary', id], queryFn: () => api.checkinSummary(id) })
+  const units = useUnits()
   if (isPending) return <PageLoading />
   if (error) return <PageError error={error} />
 
   const rows: [string, string | null][] = [
-    ['Average weight', c.avg_weight_kg != null ? `${c.avg_weight_kg} kg` : null],
+    ['Average weight', c.avg_weight_kg != null ? bodyWeight(c.avg_weight_kg, units) : null],
     ['Waist', c.waist_cm != null ? inches(c.waist_cm) : null],
     ['Hips', c.hips_cm != null ? inches(c.hips_cm) : null],
     ['Energy', c.energy != null ? `${c.energy} of 5` : null],

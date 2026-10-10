@@ -21,6 +21,8 @@ export interface AuthUser {
   role: Role
   setupDone: boolean
   coachFirstName: string | null
+  /** kg or lb for every weight shown or entered (users.unit_system) */
+  units: UnitSystem
 }
 
 export interface SetupAnswers {
@@ -50,10 +52,11 @@ export class AuthError extends Error {
 }
 
 const redirectTo = () => `${window.location.origin}/login`
-const toUser = (p: Omit<AuthUser, 'first_name' | 'initials'>): AuthUser => {
+const toUser = (p: Omit<AuthUser, 'first_name' | 'initials' | 'units'> & { units?: UnitSystem }): AuthUser => {
   const parts = p.full_name.trim().split(/\s+/).filter(Boolean)
   return {
     ...p,
+    units: p.units ?? demoUnits(),
     first_name: parts[0] ?? '',
     initials: (parts.length > 1 ? parts[0][0] + parts[parts.length - 1][0] : (parts[0] ?? p.email).slice(0, 2)).toUpperCase(),
   }
@@ -98,6 +101,15 @@ function writePending(v: { email: string; answers: SetupAnswers } | null) {
 //   coach@demo.test → the coach app; any other email → a client.
 // With Supabase the role comes from public.users.role and nothing else.
 const DEMO_KEY = 'yuktara.demoAuth'
+/** The demo kg/lb choice (demo mode only; Supabase mode uses users.unit_system). */
+const DEMO_UNITS_KEY = 'yuktara.demoUnits'
+function demoUnits(): UnitSystem {
+  try {
+    return localStorage.getItem(DEMO_UNITS_KEY) === 'metric' ? 'metric' : 'imperial'
+  } catch {
+    return 'imperial'
+  }
+}
 export const DEMO_COACH_EMAIL = DEMO_ACCOUNTS.coach.email
 const isDemoCoach = (email: string) => email.trim().toLowerCase() === DEMO_COACH_EMAIL
 const demoCoach = () => toUser({ ...DEMO_ACCOUNTS.coach, role: 'coach', setupDone: true, coachFirstName: null })
@@ -111,7 +123,7 @@ function demoRead(): AuthUser | null {
   }
   if (!stored?.email) return null
   // Never trust a role saved in the browser: rebuild it from the demo account list.
-  return isDemoCoach(stored.email) ? demoCoach() : { ...stored, role: 'client' }
+  return isDemoCoach(stored.email) ? demoCoach() : { ...stored, role: 'client', units: demoUnits() }
 }
 function demoWrite(u: AuthUser | null) {
   try {
@@ -141,7 +153,7 @@ export async function loadUser(): Promise<AuthUser | null> {
     return null
   }
   const uid = session.user.id
-  const { data: u, error } = await supabase.from('users').select('id, email, full_name, role').eq('id', uid).single()
+  const { data: u, error } = await supabase.from('users').select('id, email, full_name, role, unit_system').eq('id', uid).single()
   if (error) throw error
 
   let setupDone = true
@@ -160,9 +172,27 @@ export async function loadUser(): Promise<AuthUser | null> {
       setupDone = true
     }
   }
-  const user = toUser({ id: u.id, email: u.email, full_name: u.full_name, role: u.role, setupDone, coachFirstName })
+  const user = toUser({ id: u.id, email: u.email, full_name: u.full_name, role: u.role, setupDone, coachFirstName, units: u.unit_system ?? 'imperial' })
   setCurrentUser(user)
   return user
+}
+
+/** Saves the kg/lb choice to the user's own row (RLS: users update themselves), then reloads the user. */
+export async function setUnits(units: UnitSystem) {
+  if (!supabase) {
+    try {
+      localStorage.setItem(DEMO_UNITS_KEY, units)
+    } catch {
+      /* kept for this page only */
+    }
+    emit()
+    return
+  }
+  const { data: { session } } = await supabase.auth.getSession()
+  if (!session) throw new AuthError('other', 'Your session has ended. Log in again.')
+  const { error } = await supabase.from('users').update({ unit_system: units }).eq('id', session.user.id)
+  if (error) throw error
+  emit()
 }
 
 export async function signIn(email: string, password: string) {
@@ -341,7 +371,12 @@ export async function completeSetup(answers: SetupAnswers, email: string): Promi
       writePending({ email, answers })
       return 'pending'
     }
-    demoWrite({ ...u, setupDone: true })
+    try {
+      localStorage.setItem(DEMO_UNITS_KEY, answers.units)
+    } catch {
+      /* demo only */
+    }
+    demoWrite({ ...u, setupDone: true, units: answers.units })
     return 'saved'
   }
   const { data: { session } } = await supabase.auth.getSession()
@@ -358,7 +393,7 @@ async function saveSetup(uid: string, a: SetupAnswers) {
   const db = supabase!
   const imperial = a.units === 'imperial'
   const num = (v: string) => (v.trim() === '' ? null : Number(v))
-  const kg = (v: string) => { const n = num(v); return n == null ? null : +(imperial ? lbToKg(n) : n).toFixed(1) }
+  const kg = (v: string) => { const n = num(v); return n == null ? null : +(imperial ? lbToKg(n) : n).toFixed(2) }
   const cm = (v: string) => { const n = num(v); return n == null ? null : +(imperial ? n * 2.54 : n).toFixed(1) }
 
   const { error: uErr } = await db.from('users').update({ unit_system: a.units }).eq('id', uid)

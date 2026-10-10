@@ -11,6 +11,8 @@ interface Props {
   highlight?: string
   goalLabel?: string
   valueLabel?: string
+  /** unit of the values, for screen readers (points are already in it) */
+  unit?: string
 }
 
 /**
@@ -18,7 +20,7 @@ interface Props {
  * Drawn in a fixed 600-wide viewBox and stretched horizontally, so strokes
  * use non-scaling-stroke and dots are HTML-free circles sized per height.
  */
-export function LineChart({ points, goal, projection, area = true, height = 180, showLabels = true, highlight, goalLabel, valueLabel }: Props) {
+export function LineChart({ points, goal, projection, area = true, height = 180, showLabels = true, highlight, goalLabel, valueLabel, unit = 'kg' }: Props) {
   const W = 600
   const H = height
   const padX = 18
@@ -40,7 +42,7 @@ export function LineChart({ points, goal, projection, area = true, height = 180,
   return (
     <div className="line-chart" style={{ height: H }}>
       <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="none" role="img"
-        aria-label={last ? `Weekly average weight, latest ${last.kg} kg${goal != null ? `, goal ${goal} kg` : ''}` : 'No weigh-ins yet'}>
+        aria-label={last ? `Weekly average weight, latest ${last.kg} ${unit}${goal != null ? `, goal ${goal} ${unit}` : ''}` : 'No weigh-ins yet'}>
         {area && last && <path d={areaPath} fill="var(--chart-fill)" />}
         {goal != null && (
           <line x1={padX} x2={W - padX} y1={y(goal)} y2={y(goal)} stroke="var(--leaf)" strokeWidth="1.5" strokeDasharray="5 5" vectorEffect="non-scaling-stroke" />

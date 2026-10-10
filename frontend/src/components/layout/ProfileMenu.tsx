@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router'
 import { LogOut, Monitor, Moon, Sun } from 'lucide-react'
 import { useTheme, type ThemePref } from '@/app/hooks'
 import { useAuth } from '@/app/auth'
+import { setUnits } from '@/lib/auth'
+import type { UnitSystem } from '@/types/db'
 
 /** Avatar button for the signed-in person: who they are, theme, log out. */
 export function ProfileMenu({
@@ -17,6 +19,8 @@ export function ProfileMenu({
   const { user, signOut } = useAuth()
   const navigate = useNavigate()
   const ref = useRef<HTMLDivElement>(null)
+  const [unitsError, setUnitsError] = useState<string | null>(null)
+  const [savingUnits, setSavingUnits] = useState(false)
 
   useEffect(() => {
     if (!open) return
@@ -60,6 +64,22 @@ export function ProfileMenu({
               </button>
             ))}
           </div>
+          <div className="eyebrow">Weights</div>
+          <div className="seg light block" role="group" aria-label="Weight units">
+            {(['imperial', 'metric'] as UnitSystem[]).map((u) => (
+              <button key={u} type="button" aria-pressed={user.units === u} disabled={savingUnits}
+                onClick={async () => {
+                  if (user.units === u) return
+                  setSavingUnits(true)
+                  setUnitsError(null)
+                  // Saves users.unit_system; the user reloads and every screen refetches in the new unit.
+                  try { await setUnits(u) } catch { setUnitsError("Couldn't save. Try again.") } finally { setSavingUnits(false) }
+                }}>
+                {u === 'imperial' ? 'lb' : 'kg'}
+              </button>
+            ))}
+          </div>
+          {unitsError && <span role="alert" className="xs bad">{unitsError}</span>}
           <button role="menuitem" type="button" className="menu-item"
             onClick={async () => { setOpen(false); await signOut(); navigate('/login', { replace: true }) }}>
             <LogOut size={16} /> Log out

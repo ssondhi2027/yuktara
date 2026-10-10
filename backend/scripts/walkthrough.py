@@ -282,6 +282,32 @@ check(len(coach.get("meal_logs", select="title", client_id=f"eq.{client.id}")) =
 d = coach.get("daily_logs", select="steps,weight_kg", client_id=f"eq.{client.id}")[0]
 check(d["steps"] == 6420 and float(d["weight_kg"]) == 74.1, "coach sees steps and weight")
 
+step("Units: new accounts start in lb; each user switches kg/lb on their own row; weights stay in kg")
+check(
+    client.get("users", select="unit_system", id=f"eq.{client.id}")[0]["unit_system"] == "imperial"
+    and coach.get("users", select="unit_system", id=f"eq.{coach.id}")[0]["unit_system"] == "imperial",
+    "client and coach start in pounds",
+)
+r = client.write("PATCH", "users", {"unit_system": "metric"}, id=f"eq.{client.id}")
+check(r.status_code == 200 and r.json()[0]["unit_system"] == "metric", "client switches to kg (the avatar menu)")
+r = client.write("PATCH", "users", {"unit_system": "imperial"}, id=f"eq.{client.id}")
+check(r.status_code == 200 and r.json()[0]["unit_system"] == "imperial", "and back to lb")
+r = client.write("PATCH", "users", {"unit_system": "metric"}, id=f"eq.{coach.id}")
+check(r.status_code == 200 and r.json() == [], "client can't change the coach's setting")
+# The app converts 160.0 lb to kg with two decimals (lib/units.ts kgFromInput) and stores that.
+r = client.write(
+    "POST",
+    "daily_logs",
+    {"client_id": client.id, "log_date": str(today), "weight_kg": 72.57},
+    prefer="resolution=merge-duplicates,return=representation",
+    on_conflict="client_id,log_date",
+)
+stored = float(r.json()[0]["weight_kg"])
+check(
+    stored == 72.57 and round(stored / 0.45359237, 1) == 160.0,
+    "160.0 lb is stored as 72.57 kg and reads back as 160.0 lb",
+)
+
 step("Check-in opens on the check-in day, client submits it with a photo")
 # Pretend the client started 10 days ago and today is their check-in day, then run the hourly job.
 dow = (today.isoweekday()) % 7

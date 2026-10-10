@@ -24,7 +24,8 @@ export default function WorkoutPage() {
   if (library.error) return <PageError error={library.error} />
   return log.data.finished_at
     ? <Summary log={log.data} library={library.data} />
-    : <Logger key={id} log={log.data} library={library.data} />
+    // Keyed by unit too: switching kg/lb rebuilds the rows in the new unit (ticked sets are already saved).
+    : <Logger key={`${id}-${log.data.units}`} log={log.data} library={library.data} />
 }
 
 // ---------- Logging ----------

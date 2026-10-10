@@ -5,7 +5,7 @@
 import type { MuscleGroup, UnitSystem } from '@/types/db'
 import type { LoggedSet, PlannedExercise, PlannedWorkout, WorkoutSummary } from './api'
 import { addDays, weekStart } from './dates'
-import { int, kgToLb, lbToKg } from './units'
+import { inputFromKg, int, kgFromInput, loadWeight, toUnit, unitLabel } from './units'
 
 export interface PlanTemplate { id: string; name: string; day_of_week: number | null; notes: string | null; exercises: PlannedExercise[] }
 export interface PlanSession { id: string; workout_template_id: string | null; performed_on: string; finished: boolean }
@@ -87,23 +87,20 @@ export function minutesSince(startedAt: string | null, now = Date.now()): number
 
 // ---------- Weight in the client's units (stored in kg) ----------
 
-export const weightUnit = (u: UnitSystem) => (u === 'imperial' ? 'lb' : 'kg')
+export const weightUnit = unitLabel
 
-/** kg → the number shown in an input, in the client's units. */
-export function toDisplay(kg: number, u: UnitSystem): string {
-  const v = u === 'imperial' ? kgToLb(kg) : kg
-  return String(Math.round(v * 10) / 10)
-}
+/** kg → the number shown in an input, in the client's units (0.1). */
+export const toDisplay = inputFromKg
 
 /** What the client typed (their units) → kg, rounded to the column's 2 decimals. */
-export const toKg = (v: number, u: UnitSystem) => Math.round((u === 'imperial' ? lbToKg(v) : v) * 100) / 100
+export const toKg = kgFromInput
 
-export const volumeLabel = (kg: number, u: UnitSystem) => `${int(u === 'imperial' ? kgToLb(kg) : kg)} ${weightUnit(u)}`
+export const volumeLabel = (kg: number, u: UnitSystem) => `${int(toUnit(kg, u))} ${unitLabel(u)}`
 
-/** "3 × 80 kg × 6" style line for a list of sets. */
+/** "80 kg × 6 @8" style line for a list of sets (0.1 lb / 0.5 kg). */
 export function setsLine(sets: LoggedSet[], u: UnitSystem): string {
   return sets.map((s) => {
-    const w = s.weight_kg != null ? `${toDisplay(s.weight_kg, u)} ${weightUnit(u)}` : 'BW'
+    const w = s.weight_kg != null ? loadWeight(s.weight_kg, u) : 'BW'
     return `${w} × ${s.reps ?? '–'}${s.rpe != null ? ` @${s.rpe}` : ''}`
   }).join(', ')
 }

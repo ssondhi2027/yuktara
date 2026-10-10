@@ -4,7 +4,9 @@ import { useQuery } from '@tanstack/react-query'
 import { ChevronLeft, Search } from 'lucide-react'
 import { api, COACH_REFRESH, type CheckinLists, type QueueItem } from '@/lib/api'
 import { monthDay, shortDay } from '@/lib/dates'
-import { delta } from '@/lib/units'
+import { weightChange } from '@/lib/units'
+import { useUnits } from '@/app/auth'
+import type { UnitSystem } from '@/types/db'
 import { useLayout } from '@/app/hooks'
 import { Avatar } from '@/components/ui/Avatar'
 import { StatusPill } from '@/components/ui/StatusPill'
@@ -66,6 +68,7 @@ function CheckinList({ data, tab, setTab, selected, variant }: {
   selected?: string
   variant: 'cards' | 'compact'
 }) {
+  const units = useUnits()
   const [more, setMore] = useState(false)
   const items = tab === 'review' ? data.to_review : tab === 'done' ? data.done : []
   const shown = variant === 'cards' && !more ? items.slice(0, 5) : items
@@ -118,7 +121,7 @@ function CheckinList({ data, tab, setTab, selected, variant }: {
                   <div className="between"><b>{q.client.full_name}</b><span className="xs muted">{q.submitted_label.replace('Today ', '')}</span></div>
                   <div className={`xs ${q.flags.length ? 'bad strong' : q.has_question ? 'good strong' : 'muted'}`}>
                     {q.flags.length ? q.flags.join(' · ').toLowerCase().replace(/^./, (c) => c.toUpperCase())
-                      : q.has_question ? 'Asked you a question' : queueFacts(q) || 'Ready to review'}
+                      : q.has_question ? 'Asked you a question' : queueFacts(q, units) || 'Ready to review'}
                   </div>
                 </div>
               </Link>
@@ -137,6 +140,7 @@ function CheckinList({ data, tab, setTab, selected, variant }: {
 }
 
 function ReviewCard({ q, done }: { q: QueueItem; done: boolean }) {
+  const units = useUnits()
   const urgent = q.flags.length > 0 || q.has_question
   return (
     <li className="card review-card">
@@ -144,7 +148,7 @@ function ReviewCard({ q, done }: { q: QueueItem; done: boolean }) {
         <Avatar person={q.client} tone={q.flags.length ? 'peach' : undefined} />
         <div className="grow">
           <b className="review-name">{q.client.full_name}</b>
-          <div className="small muted">{[q.submitted_label.replace('Today ', ''), queueFacts(q)].filter(Boolean).join(' · ')}</div>
+          <div className="small muted">{[q.submitted_label.replace('Today ', ''), queueFacts(q, units)].filter(Boolean).join(' · ')}</div>
         </div>
         <Link to={`/coach/check-ins/${q.check_in_id}`} className={`btn btn-square ${urgent && !done ? 'btn-primary' : 'btn-outline'}`}>
           {done ? 'Open' : 'Review'}
@@ -170,5 +174,5 @@ function AllDone() {
   )
 }
 
-const queueFacts = (q: QueueItem) =>
-  [q.plan_pct != null ? `plan ${q.plan_pct}%` : null, q.weight_change != null ? delta(q.weight_change) : null].filter(Boolean).join(' · ')
+const queueFacts = (q: QueueItem, units: UnitSystem) =>
+  [q.plan_pct != null ? `plan ${q.plan_pct}%` : null, q.weight_change != null ? weightChange(q.weight_change, units) : null].filter(Boolean).join(' · ')

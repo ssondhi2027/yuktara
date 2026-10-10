@@ -70,7 +70,7 @@ async function loadMe(): Promise<Me> {
     next,
     id: uid,
     person: person(uid, user.full_name),
-    units: user.unit_system ?? 'metric',
+    units: user.unit_system ?? 'imperial',
     start_date: prof.start_date,
     start_weight_kg: prof.start_weight_kg != null ? Number(prof.start_weight_kg) : null,
     goal_weight_kg: prof.goal_weight_kg != null ? Number(prof.goal_weight_kg) : null,

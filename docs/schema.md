@@ -60,6 +60,13 @@ The app's route guard (`RequireAuth` in `frontend/src/app/auth.tsx`) is only a c
    `<CODE>` is the invite code clients will type, 4–20 letters, digits or dashes (for example `NAME-7Q4K`). The coach can replace it later from the app (`POST /coach/invite-code`).
 3. Log out and log in again: the coach app opens.
 
+## Units (0016_units.sql)
+
+- **Stored in kg, shown in each user's unit.** `users.unit_system` (`imperial` = lb, `metric` = kg) is the signed-in user's choice: the avatar menu changes it (users update their own row; 0007's policy, no RLS change), and every screen converts for display and input with `frontend/src/lib/units.ts`. Coaches see their clients' weights in the coach's own unit.
+- **Defaults.** New accounts default to `imperial`, and profile setup preselects lb. Existing rows are unchanged.
+- **Precision.** Body weights (`daily_logs.weight_kg`, `check_ins.avg_weight_kg`, `client_profiles.start_weight_kg` / `goal_weight_kg`) now keep two decimals, like `set_logs.weight_kg`, so a weight typed to 0.1 lb comes back exactly (0.01 kg = 0.022 lb). Widening kept every stored value. Display rounds body weight to 0.1 and loads to 0.1 lb or 0.5 kg; waist and hips stay in inches.
+- `weekly_summaries` was recreated unchanged (it reads two of those columns).
+
 ## Programs (0015_programs.sql)
 
 - **Drafts.** A client program is a draft until the coach assigns it: `assigned_at` and `start_date` are null, and `draft_start` holds the start date picked in the builder. Clients can't read drafts (RLS) and the summaries ignore them (no `start_date`). Templates are programs with `is_template` and no client, as in 0003; only their coach sees them.

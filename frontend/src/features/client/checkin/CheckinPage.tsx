@@ -4,7 +4,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Camera, Check, ClipboardList, Lock, X } from 'lucide-react'
 import { api, type CheckinDraft } from '@/lib/api'
 import { monthDay, weekRange, weekday } from '@/lib/dates'
-import { cmToIn, int, inToCm } from '@/lib/units'
+import { bodyWeight, cmToIn, inputFromKg, int, inToCm, kgFromInput, unitLabel } from '@/lib/units'
+import { useUnits } from '@/app/auth'
 import type { PhotoPose } from '@/types/db'
 import { PageError, PageLoading } from '@/components/ui/Loading'
 import './checkin.css'
@@ -163,21 +164,25 @@ function Wizard({ initial }: { initial: CheckinDraft }) {
 }
 
 function BodyStep({ d, set }: { d: CheckinDraft; set: (p: Partial<CheckinDraft>) => void }) {
-  const num = (v: string) => (v === '' ? null : Number(v))
   // Waist and hips are typed in inches and saved in cm. Keep what was typed
   // as text so a half-typed "30." isn't rewritten mid-entry.
   const toIn = (cm: number | null) => (cm == null ? '' : String(+cmToIn(cm).toFixed(1)))
   const [waistIn, setWaistIn] = useState(() => toIn(d.waist_cm))
   const [hipsIn, setHipsIn] = useState(() => toIn(d.hips_cm))
   const fromIn = (v: string) => (v.trim() === '' || Number.isNaN(Number(v)) ? null : inToCm(Number(v)))
+  // Weight is typed in the user's unit and saved in kg, the same way.
+  const units = useUnits()
+  const [weight, setWeight] = useState(() => (d.weight_kg == null ? '' : inputFromKg(d.weight_kg, units)))
+  const toKgOrNull = (v: string) => (v.trim() === '' || Number.isNaN(Number(v)) ? null : kgFromInput(Number(v), units))
   return (
     <div className="stack" style={{ gap: 18 }}>
       <div className="field">
-        <label htmlFor="weight">Average weight this week (kg)</label>
-        <input id="weight" className="input big-input" inputMode="decimal" value={d.weight_kg ?? ''} onChange={(e) => set({ weight_kg: num(e.target.value) })} />
+        <label htmlFor="weight">Average weight this week ({unitLabel(units)})</label>
+        <input id="weight" className="input big-input" inputMode="decimal" value={weight}
+          onChange={(e) => { setWeight(e.target.value); set({ weight_kg: toKgOrNull(e.target.value) }) }} />
         <span className="small muted">
           {d.auto.avg_weight_kg != null
-            ? `From your ${d.auto.avg_weight_kg} kg daily weigh-in average. Change it if a weigh-in was off.`
+            ? `From your ${bodyWeight(d.auto.avg_weight_kg, units)} daily weigh-in average. Change it if a weigh-in was off.`
             : 'No weigh-ins logged this week. Enter your usual morning weight.'}
         </span>
       </div>
