@@ -54,14 +54,14 @@ export function CoachDashboardPage() {
           <div className="page-date">{longDay(d.today)}</div>
           <h1>{d.stats.waiting ? `${d.stats.waiting} check-in${d.stats.waiting === 1 ? '' : 's'} to review` : `Hello, ${d.coach.first_name}`}</h1>
         </div>
-        <div className="row hide-phone">
+        <div className="row dash-actions">
           {d.clients.length > 0 && (
             <label className="search">
               <Search size={16} />
               <input placeholder="Search clients" value={search} onChange={(e) => setSearch(e.target.value)} aria-label="Search clients" />
             </label>
           )}
-          <button className="btn btn-primary btn-square" onClick={() => setInviteOpen(true)}><Plus size={18} /> Add client</button>
+          <button className="btn btn-primary btn-square add-client" onClick={() => setInviteOpen(true)} aria-label="Add client"><Plus size={18} /> <span className="hide-phone">Add client</span></button>
         </div>
       </header>
 
@@ -88,9 +88,9 @@ export function CoachDashboardPage() {
 
           <div className="dash-two">
             <section className="card">
-              <div className="card-head" style={{ marginBottom: 6 }}>
+              <div className="card-head queue-head" style={{ marginBottom: 6 }}>
                 <h2>Review queue</h2>
-                <div className="row" style={{ gap: 6 }}>
+                <div className="row filter-row">
                   <FilterChip on={qf === 'all'} onClick={() => setQf('all')}>All {d.queue.length}</FilterChip>
                   <FilterChip on={qf === 'flagged'} onClick={() => setQf('flagged')}>Flagged {flagged.length}</FilterChip>
                   <FilterChip on={qf === 'questions'} onClick={() => setQf('questions')}>Questions {questions.length}</FilterChip>
@@ -223,7 +223,7 @@ function QueueRow({ q }: { q: QueueItem }) {
     <li className="queue-row">
       <Avatar person={q.client} tone={q.flags.length ? 'peach' : undefined} />
       <div className="grow">
-        <div><b>{q.client.full_name}</b> <span className="small muted">· {q.submitted_label}</span></div>
+        <div><b>{q.client.full_name}</b> <span className="small muted nowrap">· {q.submitted_label}</span></div>
         <div className="row" style={{ gap: 6, flexWrap: 'wrap', marginTop: 4 }}>
           {q.flags.map((f) => <span key={f} className="pill warn xs">{f}</span>)}
           {q.has_question && <span className="pill good xs">Question for you</span>}
@@ -242,7 +242,7 @@ function ClientTr({ c, onOpen }: { c: ClientRow; onOpen: () => void }) {
   const bad = c.status === 'slipping' || c.status === 'overdue'
   return (
     <tr className="client-row" onClick={onOpen}>
-      <td>
+      <td className="cell-client">
         <button type="button" className="row-link" onClick={(e) => { e.stopPropagation(); onOpen() }}>
           <b className="small">{c.client.full_name}</b>
         </button>
@@ -252,18 +252,18 @@ function ClientTr({ c, onOpen }: { c: ClientRow; onOpen: () => void }) {
           {c.setup_done && !c.has_targets && <span className="pill warn xs new-pill">No targets</span>}
         </div>
       </td>
-      <td><span className="row" style={{ gap: 8 }}><MiniRing value={c.days_logged} /> {c.days_logged}/7</span></td>
-      <td className={trainingLow ? 'bad strong' : undefined}>{c.workouts_planned ? `${c.workouts_done} of ${c.workouts_planned}` : c.workouts_done || '—'}</td>
-      <td className={foodLow ? 'bad strong' : undefined}>{c.food_pct != null ? `${c.food_pct}%` : '—'}</td>
-      <td>
+      <td data-label="Days logged"><span className="row" style={{ gap: 8 }}><MiniRing value={c.days_logged} /> {c.days_logged}/7</span></td>
+      <td data-label="Training" className={trainingLow ? 'bad strong' : undefined}>{c.workouts_planned ? `${c.workouts_done} of ${c.workouts_planned}` : c.workouts_done || '—'}</td>
+      <td data-label="Food on plan" className={foodLow ? 'bad strong' : undefined}>{c.food_pct != null ? `${c.food_pct}%` : '—'}</td>
+      <td data-label="Weight, 6 weeks" className="cell-weight">
         {c.weight_trend.length >= 2 ? (
           <span className="row" style={{ gap: 10 }}><Sparkline values={c.weight_trend.map((kg) => bodyValue(kg, units))} tone={bad ? 'bad' : 'good'} /> {c.weight_change != null ? weightChange(c.weight_change, units) : ''}</span>
         ) : (
           <span className="muted small">{c.weight_trend.length === 1 ? bodyWeight(c.weight_trend[0], units) : 'No weigh-ins'}</span>
         )}
       </td>
-      <td className="small">{c.last_check_in}</td>
-      <td><StatusPill status={c.status} /></td>
+      <td data-label="Last check-in" className="small">{c.last_check_in}</td>
+      <td className="cell-status"><StatusPill status={c.status} /></td>
     </tr>
   )
 }

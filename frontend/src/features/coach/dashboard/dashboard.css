@@ -52,3 +52,53 @@
 
 /* Client sheet: current program */
 .sheet-program { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; border-radius: 14px; background: var(--surface-2); }
+
+/* ---------- Phones (<768px) ---------- */
+.nowrap { white-space: nowrap; }
+.chip-btn { white-space: nowrap; flex-shrink: 0; }
+
+@media (max-width: 767.98px) {
+  /* Header: title on its own line, then search + add client */
+  .coach-dash .page-head { flex-wrap: wrap; }
+  .coach-dash .page-head > div:first-child { flex: 1 1 100%; }
+  .dash-actions { width: 100%; gap: 8px; }
+  .dash-actions .search { flex: 1; width: auto; min-width: 0; }
+  .dash-actions .add-client { flex-shrink: 0; width: 44px; height: 44px; padding: 0; justify-content: center; }
+
+  /* Card headers: chips drop under the title instead of squeezing it */
+  .coach-dash .card-head { flex-wrap: wrap; align-items: center; }
+  .coach-dash .card-head > h2 { flex: 1 1 100%; }
+
+  .stat { padding: 14px; }
+  .stat-value { font-size: 28px; }
+
+  /* Clients table becomes one card per client */
+  .table-wrap { overflow: visible; margin: 0; padding: 0; }
+  .clients-table { min-width: 0; }
+  .clients-table thead { display: none; }
+  .clients-table, .clients-table tbody { display: block; }
+  .clients-table tr.client-row {
+    display: grid; gap: 10px 12px; padding: 14px 0; border-bottom: 1px solid var(--line);
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-areas: "client client status" "days train food" "weight weight last";
+  }
+  .clients-table tr.client-row:last-child { border-bottom: 0; }
+  .clients-table td { display: block; padding: 0; border: 0; min-width: 0; }
+  .clients-table td[data-label]::before {
+    content: attr(data-label); display: block; margin-bottom: 2px;
+    font-size: 11px; font-weight: 600; color: var(--ink-2); white-space: nowrap;
+  }
+  .clients-table .cell-client { grid-area: client; }
+  .clients-table .cell-status { grid-area: status; justify-self: end; align-self: start; }
+  .clients-table td:nth-child(2) { grid-area: days; }
+  .clients-table td:nth-child(3) { grid-area: train; }
+  .clients-table td:nth-child(4) { grid-area: food; }
+  .clients-table .cell-weight { grid-area: weight; }
+  .clients-table td:nth-child(6) { grid-area: last; }
+  .client-row:hover td { background: none; }
+}
+
+/* Room for the iPhone home indicator under the fixed bottom bar */
+@media (max-width: 767.98px) {
+  .coach-dash.page { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bottom) + 28px); }
+}
