@@ -308,6 +308,76 @@ check(
     "160.0 lb is stored as 72.57 kg and reads back as 160.0 lb",
 )
 
+step("Coach pages: status, targets from next Monday, a check-in question, a new invite code; the client's Profile")
+# Clients page: pause and reactivate; the coach can't touch the client's own answers.
+for status in ("paused", "active"):
+    r = coach.write("PATCH", "client_profiles", {"status": status}, user_id=f"eq.{client.id}", select="user_id,status")
+    check(r.status_code == 200 and r.json()[0]["status"] == status, f"coach sets the client {status}")
+r = coach.write("PATCH", "client_profiles", {"diet": "vegan"}, user_id=f"eq.{client.id}", select="user_id")
+check(r.status_code >= 400, "coach can't change the client's own answers")
+
+# Nutrition plans: targets that start next Monday.
+upcoming_monday = today + timedelta(days=7 - today.weekday())
+r = coach.write(
+    "POST",
+    "nutrition_targets",
+    {
+        "client_id": client.id,
+        "effective_from": str(upcoming_monday),
+        "calories": 1950,
+        "protein_g": 150,
+        "carbs_g": 190,
+        "fat_g": 65,
+        "set_by": coach.id,
+    },
+    prefer="resolution=merge-duplicates,return=representation",
+    on_conflict="client_id,effective_from",
+)
+check(r.status_code in (200, 201), f"coach sets targets from Monday {upcoming_monday}")
+
+# Settings: a check-in question, then a new invite code (the old one stops working).
+r = coach.write(
+    "POST",
+    "checkin_questions",
+    {"coach_id": coach.id, "prompt": "How many workouts felt hard this week?", "answer_type": "number", "position": 0},
+)
+check(r.status_code == 201, "coach adds a check-in question")
+question_id = r.json()[0]["id"]
+r = coach.api("POST", "/coach/invite-code", {})
+check(
+    r.status_code == 200 and r.json()["invite_code"] != code,
+    f"coach rotates the invite code ({code} -> {r.json()['invite_code']})",
+)
+check(not client.rpc("invite_code_valid", {"code": code}).json(), "the old code no longer works")
+check(client.rpc("invite_code_valid", {"code": r.json()["invite_code"]}).json(), "the new one does")
+code = r.json()["invite_code"]
+
+# Client: the Food tab's upcoming targets, the new question, and their own Profile page.
+nxt = client.get(
+    "nutrition_targets",
+    select="calories,effective_from",
+    client_id=f"eq.{client.id}",
+    effective_from=f"gt.{today}",
+    order="effective_from",
+    limit="1",
+)
+check(nxt == [{"calories": 1950, "effective_from": str(upcoming_monday)}], "client sees the targets that start Monday")
+asked = client.get("checkin_questions", select="id,prompt,answer_type", is_active="eq.true", order="position")
+check(any(q["id"] == question_id for q in asked), "client's check-in gets the new question")
+r = client.write(
+    "PATCH",
+    "client_profiles",
+    {"diet": "vegetarian", "meals_per_day": 4, "training_days": 5, "injuries": "Sore left knee", "height_cm": 168.5},
+    user_id=f"eq.{client.id}",
+    select="diet,meals_per_day,training_days",
+)
+check(r.status_code == 200 and r.json()[0]["diet"] == "vegetarian", "client edits their own profile answers")
+r = client.write("PATCH", "users", {"full_name": "Client Renamed"}, id=f"eq.{client.id}")
+check(r.status_code == 200, "client changes their name")
+for change in ({"status": "paused"}, {"check_in_day": 4}):
+    r = client.write("PATCH", "client_profiles", change, user_id=f"eq.{client.id}", select="user_id")
+    check(r.status_code >= 400, f"client can't change {next(iter(change))}")
+
 step("Check-in opens on the check-in day, client submits it with a photo")
 # Pretend the client started 10 days ago and today is their check-in day, then run the hourly job.
 dow = (today.isoweekday()) % 7
@@ -337,10 +407,18 @@ r = client.api(
         "wins": "Logged every meal",
         "struggles": "Late nights",
         "question": "Can I swap RDLs for hip thrusts?",
+        "answers": [{"question_id": question_id, "value_number": 2}],
         "photos": [{"pose": "front", "path": up.json()["path"]}],
     },
 )
 check(r.status_code == 200 and r.json()["status"] == "submitted", "check-in submitted")
+answer = coach.get(
+    "checkin_answers",
+    select="value_number,checkin_questions(prompt)",
+    check_in_id=f"eq.{ci}",
+    question_id=f"eq.{question_id}",
+)
+check(answer and float(answer[0]["value_number"]) == 2, "the coach reads the answer to the new question")
 
 step("It appears in the coach's review queue; coach reviews with a message and new targets")
 queue = coach.get("check_ins", select="id,client_id", status="eq.submitted")
@@ -782,6 +860,22 @@ client_queries = [
         },
     ),
     ("users", {"select": "id,full_name,unit_system", "id": f"eq.{client.id}"}),
+    (
+        "client_profiles",
+        {
+            "select": "coach_id,goal,start_date,height_cm,start_weight_kg,goal_weight_kg,check_in_day,experience,"
+            "training_days,train_location,injuries,diet,foods_to_avoid,meals_per_day",
+            "user_id": f"eq.{client.id}",
+        },
+    ),
+    (
+        "nutrition_targets",
+        {
+            "select": "calories,protein_g,carbs_g,fat_g,water_ml,steps,sleep_hours,effective_from",
+            "client_id": f"eq.{client.id}",
+            "effective_from": f"gt.{today}",
+        },
+    ),
     ("messages", {"select": MESSAGE_COLS, "client_id": f"eq.{client.id}", "order": "created_at.desc", "limit": "300"}),
     ("users", {"select": "id,full_name", "id": f"in.({client.id},{coach.id})"}),
     ("client_profiles", {"select": "coach_id", "user_id": f"eq.{client.id}"}),
@@ -872,6 +966,22 @@ coach_queries = [
         },
     ),
     ("client_profiles", {"select": "user_id", "user_id": f"eq.{client.id}", "coach_id": f"eq.{coach.id}"}),
+    ("client_profiles", {"select": "user_id,status,goal,start_date,setup_completed_at", "coach_id": f"eq.{coach.id}"}),
+    (
+        "nutrition_targets",
+        {
+            "select": "client_id,calories,protein_g,carbs_g,fat_g,water_ml,steps,sleep_hours,effective_from",
+            "client_id": f"in.({client.id})",
+            "order": "effective_from.desc",
+        },
+    ),
+    (
+        "checkin_questions",
+        {"select": "id,prompt,answer_type,position,is_active,checkin_answers(count)", "coach_id": f"eq.{coach.id}"},
+    ),
+    ("users", {"select": "full_name,invite_code,default_check_in_day", "id": f"eq.{coach.id}"}),
+    ("check_ins", {"select": "id,week_start,status,submitted_at,reviewed_at", "client_id": f"eq.{client.id}"}),
+    ("daily_logs", {"select": "log_date,weight_kg", "client_id": f"eq.{client.id}", "weight_kg": "not.is.null"}),
     ("messages", {"select": MESSAGE_COLS, "client_id": f"eq.{client.id}", "order": "created_at.desc", "limit": "300"}),
 ]
 for table, params in coach_queries:
@@ -895,6 +1005,7 @@ check(
 )
 check(coach.rpc("get_coach_notes", {"client": client.id}).json() == "private", "coach reads private notes")
 check(client.rpc("get_coach_notes", {"client": client.id}).json() is None, "client can't read the coach's notes")
+check(coach.rpc("get_coach_notes", {"client": client.id}).status_code == 200, "coach reads notes for the Clients page")
 for who, name in ((client, "client"), (coach, "coach")):
     for fn in ("unread_message_count", "message_threads"):
         check(who.rpc(fn, {}).status_code == 200, f"{name} runs {fn}")

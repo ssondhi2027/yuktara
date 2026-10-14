@@ -34,7 +34,6 @@ export interface SetupAnswers {
   goal: GoalType
   weight: string
   goal_weight: string
-  check_in_day: number // 0 = Sunday … 6 = Saturday (Postgres convention)
   experience: ExerciseLevel
   training_days: number
   train_location: 'gym' | 'home' | 'both'
@@ -408,7 +407,6 @@ async function saveSetup(uid: string, a: SetupAnswers) {
     start_date: new Date().toLocaleDateString('en-CA'), // local YYYY-MM-DD
     start_weight_kg: kg(a.weight),
     goal_weight_kg: kg(a.goal_weight),
-    check_in_day: a.check_in_day,
     experience: a.experience,
     training_days: a.training_days,
     train_location: a.train_location,

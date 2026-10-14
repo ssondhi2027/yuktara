@@ -10,7 +10,7 @@
 // an empty state for those, never a made-up number.
 
 import type {
-  AnswerType, BodyModel, CheckinStatus, DietType, ExerciseLevel, GoalType, MealType, MuscleGroup, OnPlan,
+  AnswerType, BodyModel, CheckinStatus, ClientStatus, DietType, ExerciseLevel, GoalType, MealType, MuscleGroup, OnPlan,
   PhotoPose, SessionStatus, TrainLocation, UnitSystem, WeekStatus,
 } from '@/types/db'
 import { backend } from './backend'
@@ -19,6 +19,8 @@ import { liveClient } from './live/client'
 import { liveCoach } from './live/coach'
 import { liveMessages } from './live/messages'
 import { livePrograms } from './live/programs'
+import { liveManage } from './live/manage'
+import { liveProfile } from './live/profile'
 import { draftFromAnswers } from './programs'
 import { today } from './dates'
 import { isDemo } from './supabase'
@@ -69,6 +71,10 @@ export interface FoodDay {
   date: string
   /** null until the coach sets targets */
   targets: Targets | null
+  /** when the targets in force started */
+  targets_from: string | null
+  /** targets the coach set to start later ("From Mon, Oct 19") */
+  next_targets: { targets: Targets; from: string } | null
   meals: Meal[]
   planned: MealType[]
   day_rating: OnPlan | null
@@ -336,6 +342,89 @@ export interface ProgramTemplateRow {
   workouts: number
 }
 
+// ---------- Coach: Clients, Nutrition and Settings pages ----------
+export interface CoachClientRow {
+  client: Person
+  goal: GoalType | null
+  status: ClientStatus
+  setup_done: boolean
+  week: number
+  program: { id: string; name: string } | null
+  has_targets: boolean
+  last_check_in: { id: string; week_start: string; status: CheckinStatus } | null
+  /** date of the client's latest meal, daily log or workout */
+  last_activity: string | null
+}
+
+/** The Clients page detail, on top of ClientDetail. */
+export interface ClientHistory {
+  /** weekly average weights (kg), oldest first */
+  weights: WeekPoint[]
+  check_ins: { id: string; week_start: string; status: CheckinStatus; submitted_at: string | null; reviewed_at: string | null }[]
+  /** the coach's private notes */
+  notes: string
+  last_activity: string | null
+}
+
+export interface TargetVersion { effective_from: string; targets: Targets }
+
+export interface NutritionRow {
+  client: Person
+  goal: GoalType | null
+  status: ClientStatus
+  current: TargetVersion | null
+  next: TargetVersion | null
+}
+
+export interface CoachSettings { full_name: string; invite_code: string | null; default_check_in_day: number }
+
+export interface CoachQuestion {
+  /** null until saved */
+  id: string | null
+  prompt: string
+  answer_type: AnswerType
+  is_active: boolean
+  /** how many answers clients have given (a question with answers can't be deleted) */
+  answers: number
+}
+
+// ---------- Client: Profile & settings ----------
+export interface MyProfile {
+  full_name: string
+  email: string
+  units: UnitSystem
+  height_cm: number | null
+  goal_weight_kg: number | null
+  start_weight_kg: number | null
+  goal: GoalType | null
+  experience: ExerciseLevel | null
+  diet: DietType | null
+  foods_to_avoid: string | null
+  meals_per_day: number | null
+  training_days: number | null
+  train_location: TrainLocation | null
+  injuries: string | null
+  /** what the coach controls (read-only here) */
+  coach: Person | null
+  check_in_day: number
+  start_date: string
+  targets: TargetVersion | null
+  program: { name: string; week: number; weeks: number } | null
+}
+
+/** The setup answers a client may change themselves (weights in kg, height in cm). */
+export interface ProfilePatch {
+  full_name: string
+  height_cm: number | null
+  goal_weight_kg: number | null
+  diet: DietType | null
+  foods_to_avoid: string | null
+  meals_per_day: number | null
+  training_days: number | null
+  train_location: TrainLocation | null
+  injuries: string | null
+}
+
 // ---------- Messages ----------
 // One conversation per client (messages.client_id): the client and their coach.
 export interface ChatMessage {
@@ -571,8 +660,32 @@ export const api = {
     isDemo ? wait(demo.sendReview(id, body)) : backend<{ next_id: string | null }>(`/checkins/${id}/review`, body),
   applySuggestion: (id: string, swap?: SwapRequest) => (isDemo ? wait(demo.applySuggestion(id)) : liveCoach.applySuggestion(id, swap)),
   clientDetail: (clientId: string): Promise<ClientDetail> => (isDemo ? wait(demo.clientDetail(clientId)) : liveCoach.clientDetail(clientId)),
-  /** The coach sets targets that apply from today. */
-  setTargets: (clientId: string, targets: Targets) => (isDemo ? wait(demo.setTargets(clientId, targets)) : liveCoach.setTargets(clientId, targets)),
+  /** The coach sets targets that apply from `from` (default today). */
+  setTargets: (clientId: string, targets: Targets, from?: string) =>
+    isDemo ? wait(demo.setTargets(clientId, targets, from)) : liveCoach.setTargets(clientId, targets, from),
+
+  // coach pages: Clients, Nutrition plans, Settings
+  coachClients: (): Promise<CoachClientRow[]> => (isDemo ? wait(demo.coachClients()) : liveManage.clients()),
+  clientHistory: (clientId: string): Promise<ClientHistory> => (isDemo ? wait(demo.clientHistory(clientId)) : liveManage.history(clientId)),
+  setClientStatus: (clientId: string, status: ClientStatus) =>
+    isDemo ? wait(demo.setClientStatus(clientId, status)) : liveManage.setStatus(clientId, status),
+  setCheckInDay: (clientId: string, day: number) => (isDemo ? wait(demo.setCheckInDay(clientId, day)) : liveManage.setCheckInDay(clientId, day)),
+  setCoachNotes: (clientId: string, notes: string) => (isDemo ? wait(demo.setCoachNotes(clientId, notes)) : liveManage.setNotes(clientId, notes)),
+  nutritionRows: (): Promise<NutritionRow[]> => (isDemo ? wait(demo.nutritionRows()) : liveManage.nutrition()),
+  targetHistory: (clientId: string): Promise<TargetVersion[]> => (isDemo ? wait(demo.targetHistory(clientId)) : liveManage.targetHistory(clientId)),
+  coachSettings: (): Promise<CoachSettings> => (isDemo ? wait(demo.coachSettings()) : liveManage.settings()),
+  saveCoachSettings: (s: { full_name: string; default_check_in_day: number }) =>
+    isDemo ? wait(demo.saveCoachSettings(s)) : liveManage.saveSettings(s),
+  /** A new invite code; the old one stops working at once. */
+  rotateInviteCode: (): Promise<{ invite_code: string }> =>
+    isDemo ? wait(demo.rotateInviteCode()) : backend<{ invite_code: string }>('/coach/invite-code', {}),
+  coachQuestions: (): Promise<CoachQuestion[]> => (isDemo ? wait(demo.coachQuestions()) : liveManage.questions()),
+  /** Saves the coach's questions in this order: new ones added, changed ones updated, missing ones deleted (or turned off if answered). */
+  saveQuestions: (qs: CoachQuestion[]) => (isDemo ? wait(demo.saveQuestions(qs)) : liveManage.saveQuestions(qs)),
+
+  // client profile
+  myProfile: (): Promise<MyProfile> => (isDemo ? wait(demo.myProfile()) : liveProfile.get()),
+  saveMyProfile: (p: ProfilePatch) => (isDemo ? wait(demo.saveMyProfile(p)) : liveProfile.save(p)),
   // messages (both apps; plain messages go straight to Supabase, RLS + a rate-limit trigger, 0014)
   /** clientId null = the signed-in client's own conversation with their coach */
   messageThread: (clientId: string | null): Promise<MessageThread> =>

@@ -40,7 +40,8 @@ async function loadClients(): Promise<{ uid: string; coach: Person; invite_code:
   const uid = await myId()
   const [me, profiles] = await Promise.all([
     db().from('users').select('id, full_name, invite_code').eq('id', uid).single(),
-    db().from('client_profiles').select(PROFILE_COLS).eq('coach_id', uid),
+    // Archived clients leave the dashboard and check-in lists; the Clients page still lists them.
+    db().from('client_profiles').select(PROFILE_COLS).eq('coach_id', uid).neq('status', 'archived'),
   ])
   const coachRow = must(me)
   const profs = must(profiles) as any[]
@@ -478,12 +479,12 @@ async function clientDetail(clientId: string): Promise<ClientDetail> {
   }
 }
 
-/** Targets that apply from today (one table, so straight to Supabase; RLS checks it's the client's coach). */
-async function setTargets(clientId: string, t: Targets) {
+/** Targets that apply from `from` (default today; one table, so straight to Supabase; RLS checks it's the client's coach). */
+async function setTargets(clientId: string, t: Targets, from: string = today()) {
   const uid = await myId()
   must(await db().from('nutrition_targets').upsert({
     client_id: clientId,
-    effective_from: today(),
+    effective_from: from,
     calories: t.calories,
     protein_g: t.protein_g,
     carbs_g: t.carbs_g,

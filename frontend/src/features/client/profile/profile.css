@@ -1,0 +1,8 @@
+/* Client Profile & settings: own answers on the left, coach-controlled and settings on the right. */
+.profile-page { max-width: 1040px; }
+.profile-cols { display: grid; gap: 16px; align-items: start; }
+@media (min-width: 1000px) { .profile-cols { grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); } }
+.profile-list { display: grid; gap: 8px; margin: 0; }
+.profile-list > div { display: grid; grid-template-columns: 110px 1fr; gap: 10px; font-size: 14px; }
+.profile-list dt { color: var(--ink-2); }
+.profile-list dd { margin: 0; }

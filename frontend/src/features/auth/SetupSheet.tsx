@@ -3,21 +3,16 @@ import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router'
 import { useAuth } from '@/app/auth'
 import { completeSetup, type SetupAnswers } from '@/lib/auth'
+import { heightProblem, weightProblem } from '@/lib/profile'
 import { CheckMark } from './AuthPage'
 import { ResendLink } from './ResendLink'
 
 const TITLES = ['About you', 'Your goal', 'Your training', 'Food and health']
 const SUBS = [
   'Step 1 of 4 · About 2 minutes in total',
-  'Step 2 of 4 · Sets your targets and check-in day',
+  'Step 2 of 4 · Your coach sets your targets from this',
   'Step 3 of 4 · So your coach can build the right plan',
   'Step 4 of 4 · Your coach uses this for your food plan',
-]
-// Shown Monday first; stored with Postgres numbering (0 = Sunday).
-const DAYS = [
-  { label: 'M', aria: 'Monday', v: 1 }, { label: 'T', aria: 'Tuesday', v: 2 }, { label: 'W', aria: 'Wednesday', v: 3 },
-  { label: 'T', aria: 'Thursday', v: 4 }, { label: 'F', aria: 'Friday', v: 5 }, { label: 'S', aria: 'Saturday', v: 6 },
-  { label: 'S', aria: 'Sunday', v: 0 },
 ]
 const GOALS = [
   { v: 'fat_loss', label: 'Lose fat', hint: 'Drop weight, keep muscle' },
@@ -34,7 +29,7 @@ type Draft = Omit<SetupAnswers, 'body_model' | 'goal' | 'experience'> & {
 
 const EMPTY: Draft = {
   date_of_birth: '', body_model: null, units: 'imperial', height: '', phone: '',
-  goal: null, weight: '', goal_weight: '', check_in_day: 0,
+  goal: null, weight: '', goal_weight: '',
   experience: null, training_days: 3, train_location: 'gym', injuries: '',
   diet: 'none', foods_to_avoid: '', meals_per_day: 3, cleared_to_exercise: false,
 }
@@ -74,19 +69,18 @@ export function SetupSheet({ email, fullName, coachFirstName, justCreated, justC
 
   const validate = (s: number) => {
     const e: Record<string, string> = {}
-    const n = (v: string) => Number(v)
     if (s === 1) {
       if (!d.body_model) e.body_model = 'Choose a body type.'
-      if (d.height && !(n(d.height) > (imperial ? 39 : 100) && n(d.height) < (imperial ? 98 : 250))) e.height = 'Check your height.'
+      const h = heightProblem(d.height, d.units)
+      if (h) e.height = h
       if (d.date_of_birth && d.date_of_birth >= new Date().toISOString().slice(0, 10)) e.date_of_birth = 'Check your date of birth.'
     }
     if (s === 2) {
       if (!d.goal) e.goal = 'Choose your main goal.'
-      const lo = imperial ? 66 : 30
-      const hi = imperial ? 660 : 300
-      if (!d.weight) e.weight = 'Enter your current weight.'
-      else if (!(n(d.weight) > lo && n(d.weight) < hi)) e.weight = 'Check this weight.'
-      if (d.goal_weight && !(n(d.goal_weight) > lo && n(d.goal_weight) < hi)) e.goal_weight = 'Check this weight.'
+      const w = weightProblem(d.weight, d.units, true)
+      if (w) e.weight = w
+      const gw = weightProblem(d.goal_weight, d.units)
+      if (gw) e.goal_weight = gw
     }
     if (s === 4 && !d.cleared_to_exercise) e.cleared = 'Please confirm before you finish.'
     setErr(e)
@@ -217,13 +211,7 @@ export function SetupSheet({ email, fullName, coachFirstName, justCreated, justC
                       {err.goal_weight && <span className="field-err">{err.goal_weight}</span>}
                     </label>
                   </div>
-                  <fieldset className="setup-field">
-                    <legend className="sr-only">Weekly check-in day</legend>
-                    <div className="setup-split" aria-hidden><span>Weekly check-in day</span><span className="auth-hint">You can change it later</span></div>
-                    <div className="opt-grid seven">
-                      {DAYS.map((day) => opt('check_in_day', day.v, day.label, { aria: day.aria, className: 'day' }))}
-                    </div>
-                  </fieldset>
+                  <p className="auth-hint">Your coach picks your weekly check-in day. You'll see it on Home.</p>
                 </>
               )}
 

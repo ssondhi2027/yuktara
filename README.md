@@ -30,8 +30,8 @@ The app has two modes, and they never mix:
 
 Sample numbers never appear in Supabase mode: a brand-new account sees empty states ("no meals yet", "waiting for your coach") until there's real data.
 
-- Client app: `/`, `/train` (and `/train/workout/:id` to log a workout), `/food`, `/check-in` (and `/check-in/:id` for a past one), `/progress`, `/messages`
-- Coach app: `/coach`, `/coach/check-ins/:id`, `/coach/messages` (and `/coach/messages/:clientId`), `/coach/programs` (and `/coach/programs/:id`, `/coach/programs/new/:clientId`)
+- Client app: `/`, `/train` (and `/train/workout/:id` to log a workout), `/food`, `/check-in` (and `/check-in/:id` for a past one), `/progress`, `/messages`, `/settings` (profile)
+- Coach app: `/coach`, `/coach/check-ins/:id`, `/coach/messages` (and `/coach/messages/:clientId`), `/coach/programs` (and `/coach/programs/:id`, `/coach/programs/new/:clientId`), `/coach/clients/:clientId`, `/coach/nutrition/:clientId`, `/coach/settings`
 - Avatar menu: theme (light, dark, auto) and Log out.
 
 ### Run against the local Supabase stack

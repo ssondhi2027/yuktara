@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Camera, ChevronLeft, ChevronRight, Image as ImageIcon, Plus, Search } from 'lucide-react'
 import { api, type FoodDay, type Meal } from '@/lib/api'
-import { addDays, clockTime, monthDay, today } from '@/lib/dates'
+import { addDays, clockTime, monthDay, shortDay, today, weekStart } from '@/lib/dates'
 import { int } from '@/lib/units'
 import type { MealType, OnPlan } from '@/types/db'
 import { MacroBar } from '@/components/ui/MacroBar'
@@ -71,6 +71,24 @@ export function FoodPage() {
   )
 }
 
+/** "Your coach updated your targets" (new this week) and targets that start later ("From Mon, Oct 19"). */
+function TargetNews({ day }: { day: FoodDay }) {
+  const fresh = day.targets && day.targets_from && day.targets_from >= weekStart(day.date) && day.targets_from <= day.date
+  const next = day.next_targets
+  if (!fresh && !next) return null
+  return (
+    <div className="target-news small">
+      {fresh && <p><b>Your coach updated your targets</b> on {shortDay(day.targets_from!)}.</p>}
+      {next && (
+        <p>
+          <b>From {shortDay(next.from)}:</b> {int(next.targets.calories)} kcal · {int(next.targets.protein_g)} g protein ·{' '}
+          {int(next.targets.carbs_g)} g carbs · {int(next.targets.fat_g)} g fat
+        </p>
+      )}
+    </div>
+  )
+}
+
 function Summary({ day, rating, onRate, isToday }: { day: FoodDay; rating: OnPlan | null; onRate: (r: OnPlan) => void; isToday: boolean }) {
   const t = day.targets
   const sum = (k: 'calories' | 'protein_g' | 'carbs_g' | 'fat_g') => day.meals.reduce((a, m) => a + m[k], 0)
@@ -86,6 +104,7 @@ function Summary({ day, rating, onRate, isToday }: { day: FoodDay; rating: OnPla
           ))}
         </div>
         <p className="small muted">Waiting for your coach to set your calorie and macro targets.</p>
+        <TargetNews day={day} />
         <hr />
         <b>{isToday ? 'Today so far, on plan?' : 'This day, on plan?'}</b>
         <div className="rating" role="group" aria-label="How did today go">
@@ -109,6 +128,7 @@ function Summary({ day, rating, onRate, isToday }: { day: FoodDay; rating: OnPla
         <MacroBar layout="stacked" label="Carbs" value={sum('carbs_g')} target={t.carbs_g} color="var(--macro-c)" />
         <MacroBar layout="stacked" label="Fat" value={sum('fat_g')} target={t.fat_g} color="var(--macro-f)" />
       </div>
+      <TargetNews day={day} />
       <hr />
       <b>{isToday ? 'Today so far, on plan?' : 'This day, on plan?'}</b>
       <div className="rating" role="group" aria-label="How did today go">

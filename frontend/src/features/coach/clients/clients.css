@@ -1,0 +1,16 @@
+/* Clients page: list (search, filters) and the client view. Split layout from review.css; rows from programs.css. */
+.client-list h1 { font-size: 30px; }
+.search-field { position: relative; display: block; }
+.search-field svg { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--ink-3); }
+.search-field .input { padding-left: 36px; }
+.list-filters { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.list-filters .input { height: 38px; padding: 0 8px; font-size: 13px; min-width: 0; }
+.program-row { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 14px; border: 1px solid transparent; background: var(--surface); color: inherit; text-decoration: none; }
+.program-row.link-row:hover { background: var(--surface-2); }
+.program-row.selected { background: var(--sage); border-color: var(--forest); }
+.builder-pick { margin: 20vh auto 0; max-width: 360px; text-align: center; }
+.client-view { max-width: 860px; }
+.coach-controls { display: grid; gap: 14px; }
+@media (min-width: 700px) { .coach-controls { grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); } }
+.client-view .sheet-program { gap: 10px; }
+.client-view .notes { min-height: 110px; }

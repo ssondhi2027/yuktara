@@ -44,3 +44,8 @@
   background: var(--surface); border: 0; text-align: left;
 }
 .search-results button:hover { background: var(--surface-2); }
+
+/* Coach's new or upcoming targets */
+.target-news { display: flex; flex-direction: column; gap: 4px; padding: 10px 14px; border-radius: 14px; background: var(--mint); color: var(--ink); }
+.target-news p { margin: 0; }
+.target-news b { color: var(--mint-ink); }

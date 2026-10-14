@@ -1,4 +1,7 @@
 import type { Targets } from '@/lib/api'
+import { calorieMismatch, macroCalories } from '@/lib/targets'
+
+export { targetsProblem } from '@/lib/targets'
 
 export const EMPTY_TARGETS: Targets = { calories: 0, protein_g: 0, carbs_g: 0, fat_g: 0, water_ml: 0, steps: 0, sleep_h: 0 }
 
@@ -11,15 +14,6 @@ const FIELDS: { key: keyof Targets; label: string; step: number; scale?: number;
   { key: 'water_ml', label: 'Water (L)', step: 0.1, scale: 1000 },
   { key: 'sleep_h', label: 'Sleep (h)', step: 0.5 },
 ]
-
-/** Problems with a set of targets, or null if it can be saved. */
-export function targetsProblem(t: Targets): string | null {
-  if (!(t.calories >= 800 && t.calories <= 8000)) return 'Calories should be between 800 and 8,000.'
-  if (t.protein_g < 0 || t.protein_g > 500 || t.carbs_g < 0 || t.carbs_g > 1000 || t.fat_g < 0 || t.fat_g > 400) return 'Check the macro grams.'
-  if (t.steps < 0 || t.steps > 100_000) return 'Steps should be between 0 and 100,000.'
-  if (t.sleep_h && (t.sleep_h < 3 || t.sleep_h > 14)) return 'Sleep should be between 3 and 14 hours.'
-  return null
-}
 
 /** The coach's calorie, macro and habit targets for a client. */
 export function TargetsForm({ value, onChange, idPrefix = 't' }: { value: Targets; onChange: (t: Targets) => void; idPrefix?: string }) {
@@ -43,9 +37,15 @@ export function TargetsForm({ value, onChange, idPrefix = 't' }: { value: Target
                 onChange({ ...value, [f.key]: f.scale ? Math.round(n * f.scale) : n })
               }}
             />
+            {f.key === 'calories' && macroCalories(value) > 0 && (
+              <span className={`xs ${calorieMismatch(value) ? 'bad' : 'muted'}`}>
+                Macros add up to {macroCalories(value).toLocaleString('en-US')} kcal
+              </span>
+            )}
           </div>
         )
       })}
+      {calorieMismatch(value) && <div role="note" className="auth-note err" style={{ gridColumn: '1 / -1' }}>{calorieMismatch(value)}</div>}
     </div>
   )
 }

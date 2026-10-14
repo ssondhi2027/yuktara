@@ -10,7 +10,7 @@ import { ApiError, backend, uploadPhoto } from '../backend'
 import { addDays, parseDate, today, weekStart } from '../dates'
 import {
   avg, dayBounds, db, lastCoachMessage, localDate, must, myId, nextCheckInDate, person, plannedMeals,
-  programWeek, round1, sessionSummaries, sessionSummary, SESSION_SUMMARY_COLS, signedUrls, targetsOn, weekMonday,
+  programWeek, round1, sessionSummaries, targetsFromRow, sessionSummary, SESSION_SUMMARY_COLS, signedUrls, targetsOn, weekMonday,
 } from './shared'
 import { minutesSince, OWN_WORKOUT, weekPlan, workoutsDone, type PlanTemplate } from '../workouts'
 
@@ -215,15 +215,21 @@ async function bests(uid: string): Promise<ClientHome['bests']> {
 
 async function foodDay(date: string, ctx?: Me): Promise<FoodDay> {
   const me = ctx ?? await loadMe()
-  const [targets, meals, logs] = await Promise.all([
+  const [targets, meals, logs, next] = await Promise.all([
     targetsOn(me.id, date),
     mealsBetween(me.id, date, addDays(date, 1)),
     db().from('daily_logs').select('day_rating').eq('client_id', me.id).eq('log_date', date).maybeSingle(),
+    // Targets the coach set to start later (Nutrition page, "from next Monday").
+    db().from('nutrition_targets').select('calories, protein_g, carbs_g, fat_g, water_ml, steps, sleep_hours, effective_from')
+      .eq('client_id', me.id).gt('effective_from', date).order('effective_from').limit(1),
   ])
+  const upcoming = (must(next) as any[])[0]
   const urls = await signedUrls(meals.map((m) => m.photo_url).filter((p): p is string => !!p))
   return {
     date,
     targets: targets?.targets ?? null,
+    targets_from: targets?.from ?? null,
+    next_targets: upcoming ? { targets: targetsFromRow(upcoming), from: upcoming.effective_from } : null,
     meals: meals.map((m) => toMeal(m, urls)),
     planned: plannedMeals(me.meals_per_day),
     day_rating: must(logs)?.day_rating ?? null,

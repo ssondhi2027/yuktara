@@ -2,7 +2,7 @@ import type { UnitSystem } from '@/types/db'
 
 // Everything is stored metric. Convert only for display.
 const KG_PER_LB = 0.45359237
-const CM_PER_IN = 2.54
+export const CM_PER_IN = 2.54
 
 export const kgToLb = (kg: number) => kg / KG_PER_LB
 export const lbToKg = (lb: number) => lb * KG_PER_LB

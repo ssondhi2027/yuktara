@@ -5,11 +5,12 @@
 import type { BodyModel, ExerciseLevel, MealType, MuscleGroup, OnPlan } from '@/types/db'
 import type {
   CheckinDraft, CheckinLists, CheckinReview, ClientDetail, ClientHome, ClientProgress, ClientRow,
-  ChatMessage, CheckinSummary, CoachDashboard, CoachNote, Conversation, DailyPatch, DaySummary, FoodDay, LastTime,
+  ChatMessage, CheckinSummary, ClientHistory, CoachClientRow, CoachDashboard, CoachNote, CoachQuestion, CoachSettings, Conversation,
+  MyProfile, NutritionRow, ProfilePatch, TargetVersion, DailyPatch, DaySummary, FoodDay, LastTime,
   LibraryExercise, Meal, MessageThread, MuscleDetail, NextProgram, Person, PlannedExercise, Program, ProgramClientRow,
   ProgramTemplateRow, ProgramWorkout, QueueItem, SetWrite, Targets, TodayWorkout, TrainWeek, WorkoutLog, WorkoutSummary,
 } from './api'
-import type { ExerciseLevel as Level, GoalType, TrainLocation } from '@/types/db'
+import type { ClientStatus, DietType, ExerciseLevel as Level, GoalType, TrainLocation } from '@/types/db'
 import { addDays, pinToday } from './dates'
 import { bodyWeight } from './units'
 import { ApiError } from './backend'
@@ -83,6 +84,8 @@ const foodDays = new Map<string, FoodDay>()
 foodDays.set(TODAY, {
   date: TODAY,
   targets,
+  targets_from: '2026-08-24',
+  next_targets: null,
   planned: ['breakfast', 'snack', 'lunch', 'dinner'],
   day_rating: 'yes',
   meals: [
@@ -97,6 +100,8 @@ function pastFoodDay(date: string): FoodDay {
   return {
     date,
     targets,
+    targets_from: '2026-08-24',
+    next_targets: null,
     planned: ['breakfast', 'lunch', 'dinner'],
     day_rating: 'yes',
     meals: [
@@ -110,7 +115,6 @@ function pastFoodDay(date: string): FoodDay {
 let bodyModel: BodyModel = 'female'
 
 const habitsToday = { steps_today: 6420 as number | null, water_ml_today: 1500 as number | null, sleep_last_night: (7 + 10 / 60) as number | null, weight_today: 71.6 as number | null }
-const demoTargets: Record<string, Targets> = {}
 
 const sets: Record<MuscleGroup, number> = {
   chest: 9, shoulders: 6, biceps: 4, triceps: 6, forearms: 0, abs: 3, obliques: 0, traps: 2,
@@ -509,6 +513,53 @@ function demoProgram(id: string): DemoProgram {
   return p
 }
 
+// ---------- Coach pages: status, targets, notes, settings, questions ----------
+const clientStatus: Record<string, ClientStatus> = { 'c-jordan': 'paused' }
+const checkInDay: Record<string, number> = {}
+const coachNotes: Record<string, string> = { [aisha.id]: 'Lower back tight after RDLs. Check form video next week.' }
+const coachSettings: CoachSettings = { full_name: DEMO_ACCOUNTS.coach.full_name, invite_code: DEMO_ACCOUNTS.invite_code, default_check_in_day: 0 }
+let questions: CoachQuestion[] = [
+  { id: 'q-energy', prompt: 'How was your energy this week?', answer_type: 'scale', is_active: true, answers: 12 },
+  { id: 'q-steps', prompt: 'Did you hit your step target most days?', answer_type: 'yes_no', is_active: true, answers: 9 },
+  { id: 'q-cardio', prompt: 'Minutes of cardio this week', answer_type: 'number', is_active: false, answers: 4 },
+]
+
+/** Targets by start date. Sofia and Hana have none yet. */
+const targetVersions: Record<string, TargetVersion[]> = Object.fromEntries(roster
+  .filter((r) => !['c-sofia', 'c-hana'].includes(r.client.id))
+  .map((r) => [r.client.id, r.client.id === aisha.id
+    ? [{ effective_from: '2026-08-24', targets: { ...targets, calories: 2200, protein_g: 135 } }, { effective_from: '2026-09-21', targets: { ...targets } }]
+    : [{ effective_from: addDays(WEEK_START, -(r.week - 1) * 7), targets: { ...targets, calories: r.goal === 'muscle_gain' ? 2600 : r.goal === 'fat_loss' ? 1900 : 2200 } }]]))
+
+function targetsOn(clientId: string, date: string): TargetVersion | null {
+  return (targetVersions[clientId] ?? []).filter((v) => v.effective_from <= date).sort((a, b) => b.effective_from.localeCompare(a.effective_from))[0] ?? null
+}
+
+function storedFoodDay(date: string): FoodDay {
+  if (!foodDays.has(date)) {
+    foodDays.set(date, date > TODAY
+      ? { date, targets, targets_from: null, next_targets: null, meals: [], planned: ['breakfast', 'lunch', 'dinner'], day_rating: null }
+      : pastFoodDay(date))
+  }
+  return foodDays.get(date)!
+}
+
+const profileEdits: Partial<ProfilePatch> = {}
+function demoProfile(): MyProfile {
+  const a = answersOf(aisha.id)
+  const prog = currentProgram(aisha.id)
+  const cur = targetsOn(aisha.id, TODAY)
+  return {
+    full_name: aisha.full_name, email: DEMO_ACCOUNTS.client.email, units: 'imperial', height_cm: 165, goal_weight_kg: 68, start_weight_kg: 74.6,
+    goal: 'fat_loss', experience: a.experience, diet: 'none' as DietType, foods_to_avoid: null, meals_per_day: 4,
+    training_days: a.training_days, train_location: a.train_location, injuries: a.injuries,
+    coach, check_in_day: checkInDay[aisha.id] ?? 0, start_date: '2026-08-24',
+    targets: cur ? structuredClone(cur) : null,
+    program: prog ? { name: prog.name, week: programWeekOf(prog.start_date!, TODAY), weeks: prog.weeks } : null,
+    ...profileEdits,
+  }
+}
+
 // ---------- Messages ----------
 // Aisha's conversation with the coach (with last week's check-in feedback),
 // plus short threads with Priya (2 unread) and Marco.
@@ -677,21 +728,22 @@ export const demo = {
   },
 
   foodDay(date: string): FoodDay {
-    if (!foodDays.has(date)) {
-      foodDays.set(date, date > TODAY
-        ? { date, targets, meals: [], planned: ['breakfast', 'lunch', 'dinner'], day_rating: null }
-        : pastFoodDay(date))
+    const day = storedFoodDay(date)
+    const cur = targetsOn(aisha.id, date)
+    const next = (targetVersions[aisha.id] ?? []).filter((v) => v.effective_from > date).sort((a, b) => a.effective_from.localeCompare(b.effective_from))[0]
+    return {
+      ...day, meals: day.meals, targets: cur?.targets ?? null, targets_from: cur?.effective_from ?? null,
+      next_targets: next ? { targets: next.targets, from: next.effective_from } : null,
     }
-    return foodDays.get(date)!
   },
 
   rateDay(date: string, rating: OnPlan) {
-    demo.foodDay(date).day_rating = rating
+    storedFoodDay(date).day_rating = rating
     return { ok: true }
   },
 
   logMeal(date: string, m: Omit<Meal, 'id'>) {
-    const day = demo.foodDay(date)
+    const day = storedFoodDay(date)
     const saved = { ...m, id: crypto.randomUUID() }
     day.meals.push(saved)
     day.meals.sort((a, b) => a.eaten_at.localeCompare(b.eaten_at))
@@ -699,7 +751,8 @@ export const demo = {
   },
 
   checkinDraft(): CheckinDraft {
-    return checkin
+    // The coach's active questions, in their order (Settings page).
+    return { ...checkin, questions: questions.filter((q) => q.is_active).map((q) => ({ id: q.id!, prompt: q.prompt, answer_type: q.answer_type })), answers: checkin.answers ?? {} }
   },
 
   saveCheckin(patch: Partial<CheckinDraft>) {
@@ -749,7 +802,7 @@ export const demo = {
         { client: roster[6].client, status: 'overdue', text: `Missed last week's check-in. Weight is dropping ${bodyWeight(0.9, demoUnits())} a week, faster than planned.`, action: 'Message Jordan' },
         { client: roster[4].client, status: 'awaiting', text: "Week 2. Logged 2 of 7 days and hasn't checked in yet (due 8 PM).", action: 'Send a reminder' },
       ],
-      clients: roster.map(({ client, goal, week, weeks, days_logged, workouts_done, workouts_planned, food_pct, weight_trend, weight_change, last_check_in, status }) => ({
+      clients: roster.filter((r) => clientStatus[r.client.id] !== 'archived').map(({ client, goal, week, weeks, days_logged, workouts_done, workouts_planned, food_pct, weight_trend, weight_change, last_check_in, status }) => ({
         client, goal, week, weeks, days_logged, workouts_done, workouts_planned, food_pct, weight_trend, weight_change, last_check_in, status,
         is_new: week === 1, setup_done: true, has_targets: true,
       })),
@@ -888,9 +941,10 @@ export const demo = {
     return {
       client: r.client, email: `${r.client.first_name.toLowerCase()}@example.com`, setup_done: true, goal: r.goal,
       start_date: addDays(WEEK_START, -(r.week - 1) * 7), week: r.week, date_of_birth: '1996-03-14', height_cm: 165,
-      start_weight_kg: r.weight_trend[0] ?? null, goal_weight_kg: r.client.id === aisha.id ? 68 : null, check_in_day: 0,
+      start_weight_kg: r.weight_trend[0] ?? null, goal_weight_kg: r.client.id === aisha.id ? 68 : null,
       ...answersOf(r.client.id), diet: 'none', foods_to_avoid: null, meals_per_day: 4,
-      targets: demoTargets[clientId] ?? { ...targets }, targets_from: '2026-08-24',
+      targets: targetsOn(clientId, TODAY)?.targets ?? null, targets_from: targetsOn(clientId, TODAY)?.effective_from ?? null,
+      check_in_day: checkInDay[clientId] ?? 0,
       program: (() => {
         const p = currentProgram(clientId) ?? upcomingProgram(clientId)
         if (!p) return null
@@ -901,8 +955,107 @@ export const demo = {
     }
   },
 
-  setTargets(clientId: string, t: Targets) {
-    demoTargets[clientId] = { ...t }
+  setTargets(clientId: string, t: Targets, from: string = TODAY) {
+    const list = (targetVersions[clientId] ??= []).filter((v) => v.effective_from !== from)
+    targetVersions[clientId] = [...list, { effective_from: from, targets: { ...t } }]
+    return { ok: true }
+  },
+
+  // ----- coach pages -----
+  coachClients(): CoachClientRow[] {
+    return roster.map((r): CoachClientRow => {
+      const prog = currentProgram(r.client.id)
+      return {
+        client: r.client, goal: r.goal, status: clientStatus[r.client.id] ?? 'active', setup_done: true, week: r.week,
+        program: prog ? { id: prog.id, name: prog.name } : null,
+        has_targets: !!targetsOn(r.client.id, TODAY),
+        last_check_in: r.checked_in ? { id: ciId(r), week_start: WEEK_START, status: r.reviewed ? 'reviewed' : 'submitted' } : null,
+        last_activity: addDays(TODAY, -(roster.indexOf(r) % 4)),
+      }
+    })
+  },
+
+  clientHistory(clientId: string): ClientHistory {
+    const r = roster.find((x) => x.client.id === clientId) ?? roster[0]
+    const w = r.client.id === aisha.id ? aishaWeights : r.weight_trend
+    return {
+      weights: w.map((kg, i) => ({ label: `W${r.week - w.length + i + 1}`, kg })),
+      check_ins: Array.from({ length: Math.min(r.week - 1, 6) }, (_, i) => {
+        const ws = addDays(WEEK_START, -7 * i)
+        const current = i === 0
+        return {
+          id: current ? ciId(r) : `${ciId(r)}-${i}`, week_start: ws,
+          status: current ? (r.reviewed ? 'reviewed' : r.checked_in ? 'submitted' : 'due') : 'reviewed',
+          submitted_at: current && !r.checked_in ? null : `${addDays(ws, 6)}T18:30:00`,
+          reviewed_at: current && !r.reviewed ? null : `${addDays(ws, 7)}T09:00:00`,
+        }
+      }),
+      notes: coachNotes[clientId] ?? '',
+      last_activity: addDays(TODAY, -(roster.indexOf(r) % 4)),
+    }
+  },
+
+  setClientStatus(clientId: string, status: ClientStatus) {
+    clientStatus[clientId] = status
+    return { ok: true }
+  },
+
+  setCheckInDay(clientId: string, day: number) {
+    checkInDay[clientId] = day
+    return { ok: true }
+  },
+
+  setCoachNotes(clientId: string, notes: string) {
+    coachNotes[clientId] = notes.trim()
+    return { ok: true }
+  },
+
+  nutritionRows(): NutritionRow[] {
+    return roster.map((r) => {
+      const cur = targetsOn(r.client.id, TODAY)
+      const next = (targetVersions[r.client.id] ?? []).filter((v) => v.effective_from > TODAY).sort((a, b) => a.effective_from.localeCompare(b.effective_from))[0]
+      return { client: r.client, goal: r.goal, status: clientStatus[r.client.id] ?? 'active', current: cur ? structuredClone(cur) : null, next: next ? structuredClone(next) : null }
+    })
+  },
+
+  targetHistory(clientId: string): TargetVersion[] {
+    return structuredClone(targetVersions[clientId] ?? []).sort((a, b) => b.effective_from.localeCompare(a.effective_from))
+  },
+
+  coachSettings(): CoachSettings {
+    return { ...coachSettings }
+  },
+
+  saveCoachSettings(x: { full_name: string; default_check_in_day: number }) {
+    Object.assign(coachSettings, { full_name: x.full_name.trim(), default_check_in_day: x.default_check_in_day })
+    return { ok: true }
+  },
+
+  rotateInviteCode() {
+    coachSettings.invite_code = `SIMRAN-${Math.random().toString(36).slice(2, 6).toUpperCase()}`
+    return { invite_code: coachSettings.invite_code }
+  },
+
+  coachQuestions(): CoachQuestion[] {
+    return structuredClone(questions)
+  },
+
+  saveQuestions(qs: CoachQuestion[]) {
+    const kept = qs.map((q) => ({ ...q, id: q.id ?? crypto.randomUUID(), prompt: q.prompt.trim() }))
+    // Answered questions that were removed are turned off instead.
+    const answered = questions.filter((q) => !qs.some((x) => x.id === q.id) && q.answers > 0).map((q) => ({ ...q, is_active: false }))
+    questions = [...kept, ...answered]
+    return { ok: true }
+  },
+
+  // ----- client profile -----
+  myProfile(): MyProfile {
+    const p = demoProfile()
+    return { ...p, full_name: signedIn()?.full_name ?? p.full_name, units: getCurrentUser()?.units ?? 'imperial' }
+  },
+
+  saveMyProfile(x: ProfilePatch) {
+    Object.assign(profileEdits, x)
     return { ok: true }
   },
 

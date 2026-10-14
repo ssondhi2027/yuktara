@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
-import { LogOut, Monitor, Moon, Sun } from 'lucide-react'
+import { LogOut, Monitor, Moon, Settings, Sun } from 'lucide-react'
 import { useTheme, type ThemePref } from '@/app/hooks'
 import { useAuth } from '@/app/auth'
 import { setUnits } from '@/lib/auth'
@@ -80,6 +80,10 @@ export function ProfileMenu({
             ))}
           </div>
           {unitsError && <span role="alert" className="xs bad">{unitsError}</span>}
+          <button role="menuitem" type="button" className="menu-item"
+            onClick={() => { setOpen(false); navigate(user.role === 'coach' ? '/coach/settings' : '/settings') }}>
+            <Settings size={16} /> {user.role === 'coach' ? 'Settings' : 'Profile and settings'}
+          </button>
           <button role="menuitem" type="button" className="menu-item"
             onClick={async () => { setOpen(false); await signOut(); navigate('/login', { replace: true }) }}>
             <LogOut size={16} /> Log out

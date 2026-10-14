@@ -60,6 +60,17 @@ The app's route guard (`RequireAuth` in `frontend/src/app/auth.tsx`) is only a c
    `<CODE>` is the invite code clients will type, 4–20 letters, digits or dashes (for example `NAME-7Q4K`). The coach can replace it later from the app (`POST /coach/invite-code`).
 3. Log out and log in again: the coach app opens.
 
+## Coach pages and the client's Profile (0017_coach_settings.sql)
+
+- **Who edits a client profile.** Both roles share the column grants (0007, 0010), so the `guard_client_profile` trigger decides by who is updating:
+  - the coach changes only `status` (active, paused, archived), `check_in_day` and the private `coach_notes`;
+  - the client changes their own answers (height, goal weight, diet, foods to avoid, meals per day, training days, location, injuries, date of birth, phone, body model); after setup, never goal, start date, start weight or check-in day, and never status, coach or notes.
+- **Status.** Paused and archived clients get no new check-ins (`roll_check_ins` only opens them for active clients). Archived clients leave the dashboard and check-in lists; the Clients page still lists them.
+- **Default check-in day.** `users.default_check_in_day` (the coach's Settings). A client linked with an invite code starts on it (`client_profiles_defaults` trigger at sign-up); profile setup no longer asks.
+- **Targets.** Coaches add `nutrition_targets` versions from today or a later date (the Nutrition page); the client's Food tab shows the ones in force and the next one ("From Mon, Oct 19").
+- **Check-in questions.** Coaches add, edit, reorder and turn their own questions on or off. A question with answers can't be deleted (RLS, checked with `question_has_answers`, which sees every client's answers); it's turned off instead, and old answers stay readable. Prompts are 1–200 characters.
+- **Coach profile.** The coach's name is `users.full_name` (users update their own row); the invite code rotates through `POST /coach/invite-code`.
+
 ## Units (0016_units.sql)
 
 - **Stored in kg, shown in each user's unit.** `users.unit_system` (`imperial` = lb, `metric` = kg) is the signed-in user's choice: the avatar menu changes it (users update their own row; 0007's policy, no RLS change), and every screen converts for display and input with `frontend/src/lib/units.ts`. Coaches see their clients' weights in the coach's own unit.

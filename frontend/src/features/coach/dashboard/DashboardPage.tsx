@@ -178,7 +178,7 @@ export function CoachDashboardPage() {
   )
 }
 
-function InviteCode({ code }: { code: string | null }) {
+export function InviteCode({ code }: { code: string | null }) {
   const [copied, setCopied] = useState(false)
   if (!code) {
     return <p className="small muted">You don't have an invite code yet. Set one with the SQL step in docs/schema.md, or rotate one from the API.</p>
