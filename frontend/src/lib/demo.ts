@@ -16,6 +16,7 @@ import { bodyWeight } from './units'
 import { ApiError } from './backend'
 import { minutesSince, OWN_WORKOUT, summarize, weekPlan, type PlanTemplate } from './workouts'
 import { generateProgram } from './programGen'
+import { mondayOf, plusDays, progressFrom, type Period, type ProgressDetail, type ProgressRaw } from './progress'
 import { programStatus, programWeekOf } from './programs'
 import { getCurrentUser } from './session'
 import { isDemo } from './supabase'
@@ -560,6 +561,78 @@ function demoProfile(): MyProfile {
   }
 }
 
+// ---------- Aisha's history for the Progress page ----------
+// Generated once, deterministically, from her program and weekly weights; the
+// workouts already in the demo log (from Sep 27) are used as they are.
+let progressRawCache: Omit<ProgressRaw, 'targets' | 'programs' | 'sessions'> & { generated: ProgressRaw['sessions'] } | null = null
+
+function aishaProgressRaw(): ProgressRaw {
+  if (!progressRawCache) {
+    let seed = 7
+    const rand = () => ((seed = (seed * 16807) % 2147483647) / 2147483647)
+    const jitter = (spread: number) => (rand() - 0.5) * 2 * spread
+    const days: ProgressRaw['days'] = []
+    const meals: ProgressRaw['meals'] = []
+    const generated: ProgressRaw['sessions'] = []
+    const prog = programs.get('prog-aisha')!
+    const loads: Record<string, number> = {}
+    for (let d = PROGRAM_START; d <= TODAY; d = plusDays(d, 1)) {
+      const week = Math.floor((new Date(`${d}T00:00:00`).getTime() - new Date(`${PROGRAM_START}T00:00:00`).getTime()) / (7 * 86_400_000))
+      const dow = new Date(`${d}T00:00:00`).getDay()
+      const weighIn = dow !== 3 && dow !== 6 // about five weigh-ins a week
+      days.push({
+        date: d,
+        weight_kg: weighIn ? Math.round((aishaWeights[Math.min(week, aishaWeights.length - 1)] + jitter(0.4)) * 10) / 10 : null,
+        steps: Math.round(8600 + jitter(2600)),
+        water_ml: Math.round((2200 + jitter(500)) / 50) * 50,
+        sleep_h: Math.round((7 + jitter(0.9)) * 4) / 4,
+      })
+      const onPlan = rand()
+      meals.push(
+        { date: d, calories: Math.round(480 + jitter(80)), protein_g: Math.round(36 + jitter(6)), on_plan: 'yes' },
+        { date: d, calories: Math.round(640 + jitter(110)), protein_g: Math.round(46 + jitter(8)), on_plan: onPlan > 0.25 ? 'yes' : 'partly' },
+        { date: d, calories: Math.round(820 + jitter(160)), protein_g: Math.round(50 + jitter(10)), on_plan: onPlan > 0.82 ? 'no' : 'yes' },
+      )
+      // Her four workouts on their days, loads creeping up; one Upper B missed in week 6, as on Home.
+      if (d < '2026-09-27') {
+        for (const w of prog.workouts.filter((x) => x.day_of_week === dow)) {
+          generated.push({
+            date: d, template_id: w.id,
+            sets: w.exercises.flatMap((x) => {
+              const e = exerciseById.get(x.exercise_id)
+              const start = loads[x.exercise_id] ??= e?.equipment === 'bodyweight' ? 0 : e?.equipment === 'barbell' ? 60 : 12
+              const kg = start ? Math.round((start + week * (e?.equipment === 'barbell' ? 2.5 : 1)) * 2) / 2 : null
+              return Array.from({ length: x.sets }, () => ({
+                exercise_id: x.exercise_id, name: x.name, kg, reps: Number(String(x.reps).match(/\d+/)?.[0] ?? 8), primary: e?.primary ?? [],
+              }))
+            }),
+          })
+        }
+      }
+    }
+    progressRawCache = {
+      today: TODAY, start_date: PROGRAM_START, goal_weight_kg: 68, days, meals, generated,
+      check_ins: Array.from({ length: 5 }, (_, i) => ({
+        week_start: plusDays(mondayOf(PROGRAM_START), 7 * i),
+        waist_cm: Math.round((82 - i * 0.9) * 10) / 10, hips_cm: Math.round((101 - i * 0.6) * 10) / 10,
+        energy: [3, 3, 4, 4, 4][i], sleep: [3, 4, 3, 4, 3][i], stress: [3, 3, 2, 2, 2][i], hunger: [4, 3, 3, 3, 3][i],
+      })),
+    }
+  }
+  const { generated, ...rest } = progressRawCache
+  const logged = [...sessions.values()].filter((s) => s.finished_at).map((s) => ({
+    date: s.performed_on, template_id: s.template_id,
+    sets: s.sets.map((x) => ({ exercise_id: x.exercise_id, name: exerciseById.get(x.exercise_id)?.name ?? 'Exercise', kg: x.weight_kg, reps: x.reps, primary: exerciseById.get(x.exercise_id)?.primary ?? [] })),
+  }))
+  return {
+    ...rest,
+    targets: (targetVersions[aisha.id] ?? []).map((v) => ({ from: v.effective_from, calories: v.targets.calories, protein_g: v.targets.protein_g, water_ml: v.targets.water_ml || null, steps: v.targets.steps || null, sleep_h: v.targets.sleep_h || null })),
+    programs: [...programs.values()].filter((p) => p.client_id === aisha.id && p.assigned && p.start_date && p.start_date <= TODAY)
+      .map((p) => ({ start_date: p.start_date!, weeks: p.weeks, planned: p.workouts.filter((w) => w.day_of_week != null).length })),
+    sessions: [...generated, ...logged.filter((s) => s.date >= '2026-09-27')],
+  }
+}
+
 // ---------- Messages ----------
 // Aisha's conversation with the coach (with last week's check-in feedback),
 // plus short threads with Priya (2 unread) and Marco.
@@ -959,6 +1032,10 @@ export const demo = {
     const list = (targetVersions[clientId] ??= []).filter((v) => v.effective_from !== from)
     targetVersions[clientId] = [...list, { effective_from: from, targets: { ...t } }]
     return { ok: true }
+  },
+
+  progressDetail(period: Period): ProgressDetail {
+    return progressFrom(aishaProgressRaw(), period)
   },
 
   // ----- coach pages -----

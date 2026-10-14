@@ -18,6 +18,7 @@ import { demo } from './demo'
 import { liveClient } from './live/client'
 import { liveCoach } from './live/coach'
 import { liveMessages } from './live/messages'
+import type { Period, ProgressDetail } from './progress'
 import { livePrograms } from './live/programs'
 import { liveManage } from './live/manage'
 import { liveProfile } from './live/profile'
@@ -26,6 +27,7 @@ import { today } from './dates'
 import { isDemo } from './supabase'
 
 export { ApiError } from './backend'
+export type { Period, ProgressDetail } from './progress'
 
 // ---------- Shared ----------
 export interface Person { id: string; full_name: string; first_name: string; initials: string }
@@ -632,6 +634,9 @@ export const api = {
   /** Demo: marks the in-memory draft sent. Live: POST /checkins/{id}/submit (uploads photos first). */
   submitCheckin: (draft: CheckinDraft): Promise<CheckinDraft> => (isDemo ? wait(demo.submitCheckin()) : liveClient.submitCheckin(draft)),
   progress: (): Promise<ClientProgress> => (isDemo ? wait(demo.progress()) : liveClient.progress()),
+  /** KPIs and chart series for the Progress page (lib/progress.ts), for 4 weeks, 12 weeks or since start. */
+  progressDetail: (period: Period): Promise<ProgressDetail> =>
+    isDemo ? wait(demo.progressDetail(period)) : liveClient.progressDetail(period),
   setBodyModel: (m: BodyModel) => (isDemo ? wait(demo.setBodyModel(m)) : liveClient.setBodyModel(m)),
 
   // workouts (client writes straight to Supabase, RLS: only their own sessions and sets)

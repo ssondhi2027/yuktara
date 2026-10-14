@@ -1,4 +1,6 @@
+import { useState } from 'react'
 import type { WeekPoint } from '@/lib/api'
+import { useWidth, visibleLabels } from './ChartKit'
 
 interface Props {
   points: WeekPoint[]
@@ -13,6 +15,10 @@ interface Props {
   valueLabel?: string
   /** unit of the values, for screen readers (points are already in it) */
   unit?: string
+  /** faint daily weigh-ins; `at` is a fractional point index (2.5 = mid-way through the third week) */
+  daily?: { at: number; kg: number }[]
+  /** tooltip text per point (tap or hover); null = nothing to show */
+  tips?: (string | null)[]
 }
 
 /**
@@ -20,7 +26,9 @@ interface Props {
  * Drawn in a fixed 600-wide viewBox and stretched horizontally, so strokes
  * use non-scaling-stroke and dots are HTML-free circles sized per height.
  */
-export function LineChart({ points, goal, projection, area = true, height = 180, showLabels = true, highlight, goalLabel, valueLabel, unit = 'kg' }: Props) {
+export function LineChart({ points, goal, projection, area = true, height = 180, showLabels = true, highlight, goalLabel, valueLabel, unit = 'kg', daily, tips }: Props) {
+  const [ref, width] = useWidth<HTMLDivElement>()
+  const [active, setActive] = useState<number | null>(null)
   const W = 600
   const H = height
   const padX = 18
@@ -29,7 +37,7 @@ export function LineChart({ points, goal, projection, area = true, height = 180,
   const real = points
     .map((p, i) => ({ kg: p.kg, i }))
     .filter((p): p is { kg: number; i: number } => p.kg != null)
-  const values = [...real.map((p) => p.kg), ...(goal != null ? [goal] : []), ...(projection != null ? [projection] : [])]
+  const values = [...real.map((p) => p.kg), ...(goal != null ? [goal] : []), ...(projection != null ? [projection] : []), ...(daily ?? []).map((d) => d.kg)]
   const max = Math.max(...values) + 0.5
   const min = Math.min(...values) - 0.5
   const x = (i: number) => padX + (i * (W - padX * 2)) / Math.max(1, points.length - 1)
@@ -37,10 +45,21 @@ export function LineChart({ points, goal, projection, area = true, height = 180,
 
   const line = real.map((p, k) => `${k ? 'L' : 'M'}${x(p.i)} ${y(p.kg)}`).join(' ')
   const last = real[real.length - 1]
+  const shown = visibleLabels(points.length, width, 40)
+  const pick = (e: React.PointerEvent<HTMLDivElement>) => {
+    const r = e.currentTarget.getBoundingClientRect()
+    const i = Math.round(((((e.clientX - r.left) / r.width) * W - padX) / (W - padX * 2)) * Math.max(1, points.length - 1))
+    setActive(Math.min(points.length - 1, Math.max(0, i)))
+  }
   const areaPath = last ? `${line} L${x(last.i)} ${H - padBottom} L${x(real[0].i)} ${H - padBottom} Z` : ''
 
   return (
-    <div className="line-chart" style={{ height: H }}>
+    <div className="line-chart" ref={ref} style={{ height: H }}
+      {...(tips ? {
+        onPointerDown: (e: React.PointerEvent<HTMLDivElement>) => pick(e),
+        onPointerMove: (e: React.PointerEvent<HTMLDivElement>) => e.pointerType === 'mouse' && pick(e),
+        onPointerLeave: (e: React.PointerEvent<HTMLDivElement>) => e.pointerType === 'mouse' && setActive(null),
+      } : {})}>
       <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="none" role="img"
         aria-label={last ? `Weekly average weight, latest ${last.kg} ${unit}${goal != null ? `, goal ${goal} ${unit}` : ''}` : 'No weigh-ins yet'}>
         {area && last && <path d={areaPath} fill="var(--chart-fill)" />}
@@ -53,6 +72,7 @@ export function LineChart({ points, goal, projection, area = true, height = 180,
         <path d={line} fill="none" stroke="var(--chart)" strokeWidth="3" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
       </svg>
       {/* Dots and labels are HTML so they stay round and crisp when the SVG stretches. */}
+      {daily?.map((d, k) => <span key={`d${k}`} className="chart-daily" style={{ left: `${(x(d.at) / W) * 100}%`, top: y(d.kg) }} />)}
       {real.map((p) => (
         <span key={p.i} className={`chart-dot${p === last ? ' last' : ''}`} style={{ left: `${(x(p.i) / W) * 100}%`, top: y(p.kg) }} />
       ))}
@@ -64,10 +84,13 @@ export function LineChart({ points, goal, projection, area = true, height = 180,
       )}
       {showLabels && (
         <div className="chart-labels" style={{ paddingInline: `${(padX / W) * 100}%` }}>
-          {points.map((p) => (
-            <span key={p.label} className={p.label === highlight ? 'strong' : undefined}>{p.label}</span>
+          {points.map((p, i) => (
+            <span key={p.label} className={p.label === highlight ? 'strong' : undefined}>{shown[i] ? p.label : ''}</span>
           ))}
         </div>
+      )}
+      {tips && active != null && tips[active] && (
+        <div className="chart-tip" role="status" style={{ left: `${(x(active) / W) * 100}%`, transform: `translateX(${active === 0 ? '0%' : active === points.length - 1 ? '-100%' : '-50%'})` }}>{tips[active]}</div>
       )}
     </div>
   )

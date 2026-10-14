@@ -17,6 +17,8 @@ interface AuthState {
 }
 
 const AuthContext = createContext<AuthState | null>(null)
+/** For rendering screens outside the app (scripts/check-progress.mjs). */
+export const AuthContextForTests = AuthContext
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const qc = useQueryClient()

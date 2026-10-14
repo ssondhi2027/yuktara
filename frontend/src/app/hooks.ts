@@ -10,7 +10,8 @@ export function useMediaQuery(query: string) {
       return () => m.removeEventListener('change', cb)
     },
     () => window.matchMedia(query).matches,
-    () => false,
+    // Rendering outside a browser (scripts/check-progress.mjs stubs matchMedia per width).
+    () => (typeof window !== 'undefined' && typeof window.matchMedia === 'function' ? window.matchMedia(query).matches : false),
   )
 }
 

@@ -41,3 +41,20 @@
 .scale-bar i { flex: 1; height: 7px; border-radius: 4px; background: var(--chip); }
 .scale-bar i.on.ink { background: var(--scale-on); }
 .scale-bar i.on.warn { background: var(--orange); }
+
+/* ChartKit (Progress page): bars, multi-line charts, tooltips */
+.kit-chart { position: relative; width: 100%; touch-action: pan-y; cursor: crosshair; user-select: none; }
+.kit-chart svg { display: block; overflow: visible; }
+.kit-labels { position: absolute; left: 0; right: 0; bottom: 0; display: flex; justify-content: space-around; font-size: 11px; color: var(--ink-2); }
+.kit-chart .kit-labels { justify-content: space-between; }
+.kit-labels span { width: 0; display: flex; justify-content: center; white-space: nowrap; }
+.kit-dot { position: absolute; width: 9px; height: 9px; margin: -4.5px 0 0 -4.5px; border-radius: 50%; border: 2px solid; background: var(--surface); pointer-events: none; }
+.chart-tip {
+  position: absolute; top: -6px; z-index: 3; display: flex; flex-direction: column; gap: 2px; padding: 7px 10px; border-radius: 10px;
+  background: var(--forest); color: var(--on-forest); font-size: 12px; white-space: nowrap; pointer-events: none; box-shadow: 0 6px 18px rgb(0 0 0 / .16);
+}
+.chart-tip i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; }
+.kit-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 8px; }
+.kit-legend i { display: inline-block; width: 14px; height: 0; border-top: 3px solid; vertical-align: middle; margin-right: 4px; }
+.kit-legend i.dashed { border-top-style: dashed; }
+.chart-daily { position: absolute; width: 5px; height: 5px; margin: -2.5px 0 0 -2.5px; border-radius: 50%; background: var(--chart); opacity: .28; pointer-events: none; }

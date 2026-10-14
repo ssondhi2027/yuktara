@@ -860,6 +860,37 @@ client_queries = [
         },
     ),
     ("users", {"select": "id,full_name,unit_system", "id": f"eq.{client.id}"}),
+    # Progress page (lib/live/client.ts progressDetail): one round of queries for the period.
+    (
+        "daily_logs",
+        {
+            "select": "log_date,weight_kg,steps,water_ml,sleep_hours",
+            "client_id": f"eq.{client.id}",
+            "log_date": f"gte.{monday}",
+        },
+    ),
+    ("meal_logs", {"select": "eaten_at,calories,protein_g,on_plan", "client_id": f"eq.{client.id}"}),
+    (
+        "programs",
+        {"select": "start_date,weeks,workout_templates(day_of_week,removed_at)", "client_id": f"eq.{client.id}"},
+    ),
+    (
+        "workout_sessions",
+        {
+            "select": "performed_on,workout_template_id,set_logs(exercise_id,reps,weight_kg,is_warmup,"
+            "exercises(name,exercise_muscles(muscle,role)))",
+            "client_id": f"eq.{client.id}",
+            "finished_at": "not.is.null",
+        },
+    ),
+    (
+        "check_ins",
+        {
+            "select": "week_start,waist_cm,hips_cm,energy,sleep,stress,hunger",
+            "client_id": f"eq.{client.id}",
+            "status": "in.(submitted,reviewed)",
+        },
+    ),
     (
         "client_profiles",
         {

@@ -13,6 +13,7 @@ import {
   programWeek, round1, sessionSummaries, targetsFromRow, sessionSummary, SESSION_SUMMARY_COLS, signedUrls, targetsOn, weekMonday,
 } from './shared'
 import { minutesSince, OWN_WORKOUT, weekPlan, workoutsDone, type PlanTemplate } from '../workouts'
+import { progressFrom, rawFrom, type Period, type ProgressDetail, type ProgressRaw } from '../progress'
 
 // ---------- Who am I ----------
 
@@ -708,7 +709,57 @@ async function progress(): Promise<ClientProgress> {
   }
 }
 
+/**
+ * Everything the Progress page charts, for the period and the one before it,
+ * in one round of parallel queries (as the client; RLS). lib/progress.ts does the maths.
+ */
+async function progressDetail(period: Period): Promise<ProgressDetail> {
+  const uid = await myId()
+  const t = today()
+  const prof: any = must(await db().from('client_profiles').select('start_date, goal_weight_kg').eq('user_id', uid).single())
+  const from = rawFrom(period, t, prof.start_date)
+  const [days, meals, targets, programs, sessions, checkIns] = await Promise.all([
+    db().from('daily_logs').select('log_date, weight_kg, steps, water_ml, sleep_hours').eq('client_id', uid).gte('log_date', from).lte('log_date', t),
+    db().from('meal_logs').select('eaten_at, calories, protein_g, on_plan').eq('client_id', uid).gte('eaten_at', dayBounds(from)[0]),
+    db().from('nutrition_targets').select('calories, protein_g, water_ml, steps, sleep_hours, effective_from').eq('client_id', uid),
+    db().from('programs').select('start_date, weeks, workout_templates(day_of_week, removed_at)').eq('client_id', uid).lte('start_date', t),
+    db().from('workout_sessions')
+      .select('performed_on, workout_template_id, set_logs(exercise_id, reps, weight_kg, is_warmup, exercises(name, exercise_muscles(muscle, role)))')
+      .eq('client_id', uid).gte('performed_on', from).not('finished_at', 'is', null),
+    db().from('check_ins').select('week_start, waist_cm, hips_cm, energy, sleep, stress, hunger')
+      .eq('client_id', uid).in('status', ['submitted', 'reviewed']).gte('week_start', from),
+  ])
+  const n = (x: unknown) => (x == null ? null : Number(x))
+  const raw: ProgressRaw = {
+    today: t,
+    start_date: prof.start_date,
+    goal_weight_kg: n(prof.goal_weight_kg),
+    days: (must(days) as any[]).map((d) => ({ date: d.log_date, weight_kg: n(d.weight_kg), steps: d.steps, water_ml: d.water_ml, sleep_h: n(d.sleep_hours) })),
+    meals: (must(meals) as any[]).map((m) => ({ date: localDate(m.eaten_at), calories: num(m.calories), protein_g: num(m.protein_g), on_plan: m.on_plan })),
+    targets: (must(targets) as any[]).map((r) => ({
+      from: r.effective_from, calories: r.calories, protein_g: r.protein_g, water_ml: r.water_ml, steps: r.steps, sleep_h: n(r.sleep_hours),
+    })),
+    programs: (must(programs) as any[]).map((p) => ({
+      start_date: p.start_date, weeks: p.weeks,
+      planned: (p.workout_templates ?? []).filter((w: any) => w.day_of_week != null && !w.removed_at).length,
+    })),
+    sessions: (must(sessions) as any[]).map((s) => ({
+      date: s.performed_on,
+      template_id: s.workout_template_id,
+      sets: (s.set_logs ?? []).filter((l: any) => !l.is_warmup).map((l: any) => ({
+        exercise_id: l.exercise_id, name: l.exercises?.name ?? 'Exercise', kg: n(l.weight_kg), reps: l.reps,
+        primary: (l.exercises?.exercise_muscles ?? []).filter((m: any) => m.role === 'primary').map((m: any) => m.muscle as MuscleGroup),
+      })),
+    })),
+    check_ins: (must(checkIns) as any[]).map((c) => ({
+      week_start: c.week_start, waist_cm: n(c.waist_cm), hips_cm: n(c.hips_cm), energy: c.energy, sleep: c.sleep, stress: c.stress, hunger: c.hunger,
+    })),
+  }
+  return progressFrom(raw, period)
+}
+
 export const liveClient = {
+  progressDetail,
   home, trainWeek, muscle, foodDay: (date: string) => foodDay(date), rateDay, logMeal, logDaily,
   checkinDraft, saveCheckin, submitCheckin, progress, setBodyModel,
   exerciseLibrary, startWorkout, workoutLog, lastTime, saveSet, deleteSet, saveWorkoutNote, finishWorkout, discardWorkout,
