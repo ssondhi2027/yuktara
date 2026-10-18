@@ -21,7 +21,7 @@ import {
 
 const PROFILE_COLS =
   'user_id, status, goal, start_date, start_weight_kg, goal_weight_kg, check_in_day, setup_completed_at,' +
-  ' date_of_birth, height_cm, experience, training_days, train_location, injuries, diet, foods_to_avoid, meals_per_day'
+  ' date_of_birth, phone, height_cm, experience, training_days, train_location, injuries, diet, foods_to_avoid, meals_per_day'
 
 interface Client {
   id: string
@@ -458,6 +458,7 @@ async function clientDetail(clientId: string): Promise<ClientDetail> {
     start_date: prof.start_date,
     week: programWeek(prof.start_date, today()),
     date_of_birth: prof.date_of_birth,
+    phone: prof.phone,
     height_cm: n(prof.height_cm),
     start_weight_kg: n(prof.start_weight_kg),
     goal_weight_kg: n(prof.goal_weight_kg),

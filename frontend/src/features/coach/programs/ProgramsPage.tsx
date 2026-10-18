@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router'
 import { useQuery } from '@tanstack/react-query'
 import { ChevronLeft, Plus } from 'lucide-react'
-import { api, COACH_REFRESH, type ProgramClientRow } from '@/lib/api'
+import { api, COACH_REFRESH, type LibraryExercise, type ProgramClientRow } from '@/lib/api'
 import { shortDay } from '@/lib/dates'
 import { EXPERIENCE_LABEL, GOAL_LABEL, LEVEL_LABEL, LOCATION_LABEL } from '@/lib/labels'
 import type { GoalType } from '@/types/db'
@@ -10,7 +10,9 @@ import { useLayout } from '@/app/hooks'
 import { Avatar } from '@/components/ui/Avatar'
 import { Segmented } from '@/components/ui/Segmented'
 import { PageError, PageLoading } from '@/components/ui/Loading'
+import { MUSCLE_LABEL } from '@/lib/muscles'
 import { ProgramBuilder } from './ProgramBuilder'
+import { ExerciseForm, draftOf } from './ExerciseForm'
 import '@/features/coach/review/review.css'
 import './programs.css'
 
@@ -66,11 +68,12 @@ function NewProgram({ clientId }: { clientId: string }) {
   return <ProgramBuilder initial={data} />
 }
 
-type View = 'clients' | 'templates'
+type View = 'clients' | 'templates' | 'exercises'
 
 function ProgramList({ selectedClient, selectedProgram }: { selectedClient?: string; selectedProgram?: string }) {
   const [params, setParams] = useSearchParams()
-  const view: View = params.get('view') === 'templates' ? 'templates' : 'clients'
+  const v = params.get('view')
+  const view: View = v === 'templates' || v === 'exercises' ? v : 'clients'
   return (
     <div className="stack program-list">
       <header>
@@ -78,8 +81,9 @@ function ProgramList({ selectedClient, selectedProgram }: { selectedClient?: str
         <div className="muted small">Build each client's plan from their setup answers, or reuse a template.</div>
       </header>
       <Segmented label="Show" block value={view} onChange={(v) => setParams(v === 'clients' ? {} : { view: v }, { replace: true })}
-        options={[{ value: 'clients', label: 'Clients' }, { value: 'templates', label: 'Templates' }]} />
-      {view === 'clients' ? <ClientsView selectedClient={selectedClient} selectedProgram={selectedProgram} /> : <TemplatesView selected={selectedProgram} />}
+        options={[{ value: 'clients', label: 'Clients' }, { value: 'templates', label: 'Templates' }, { value: 'exercises', label: 'Exercises' }]} />
+      {view === 'clients' ? <ClientsView selectedClient={selectedClient} selectedProgram={selectedProgram} />
+        : view === 'templates' ? <TemplatesView selected={selectedProgram} /> : <ExercisesView />}
     </div>
   )
 }
@@ -154,6 +158,37 @@ function TemplatesView({ selected }: { selected?: string }) {
           </li>
         ))}
       </ul>
+    </div>
+  )
+}
+
+/** The coach's own exercises: add, edit, delete (unused ones only). The shared library isn't edited here. */
+function ExercisesView() {
+  const { data, error, isPending } = useQuery({ queryKey: ['exercise-library'], queryFn: api.exerciseLibrary, staleTime: Infinity })
+  const [open, setOpen] = useState<LibraryExercise | 'new' | null>(null)
+  if (isPending) return <div className="skeleton" style={{ height: 240 }} />
+  if (error) return <PageError error={error} />
+  const mine = data.filter((e) => e.custom)
+  return (
+    <div className="stack" style={{ gap: 10 }}>
+      <button type="button" className="btn btn-primary btn-sm" style={{ alignSelf: 'flex-start' }} onClick={() => setOpen('new')}><Plus size={16} /> New exercise</button>
+      <p className="xs muted">
+        {data.length - mine.length} exercises in the shared library. Add your own for anything missing; your clients see them in their workouts.
+      </p>
+      {mine.length === 0 && <p className="small muted">No exercises of your own yet.</p>}
+      <ul className="list-plain" style={{ gap: 6 }}>
+        {mine.map((e) => (
+          <li key={e.id}>
+            <button type="button" className="program-row link-row" style={{ width: '100%', textAlign: 'left' }} onClick={() => setOpen(e)}>
+              <div className="grow" style={{ minWidth: 0 }}>
+                <b className="truncate" style={{ display: 'block' }}>{e.name}</b>
+                <div className="xs muted">{[e.primary.map((m) => MUSCLE_LABEL[m]).join(', '), e.equipment, LEVEL_LABEL[e.level]].filter(Boolean).join(' · ')}</div>
+              </div>
+            </button>
+          </li>
+        ))}
+      </ul>
+      {open && <ExerciseForm initial={open === 'new' ? undefined : draftOf(open)} onClose={() => setOpen(null)} />}
     </div>
   )
 }

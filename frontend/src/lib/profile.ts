@@ -28,5 +28,18 @@ export function nameProblem(v: string): string | null {
   return n.length > 80 ? 'Use up to 80 characters.' : null
 }
 
+/**
+ * A phone number as typed: optional; digits with spaces, dashes, dots,
+ * brackets and a leading +; 7–15 digits (the international limit); at most 32
+ * characters like the column.
+ */
+export function phoneProblem(v: string): string | null {
+  const t = v.trim()
+  if (!t) return null
+  const digits = t.replace(/\D/g, '').length
+  if (t.length > 32 || !/^\+?[\d\s().-]+$/.test(t) || digits < 7 || digits > 15) return 'Check this phone number.'
+  return null
+}
+
 /** Free-text answers (injuries, foods to avoid) are capped like the database columns. */
 export const textProblem = (v: string, max = 2000): string | null => (v.length > max ? `Use up to ${max.toLocaleString('en-US')} characters.` : null)

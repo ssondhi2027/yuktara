@@ -12,9 +12,11 @@ import { PageError, PageLoading } from '@/components/ui/Loading'
 import { GOAL_LABEL } from '@/lib/labels'
 import { bodyValue, bodyWeight, pointsIn, unitLabel } from '@/lib/units'
 import { useUnits } from '@/app/auth'
+import { ClientSignals } from '@/features/coach/ClientSignals'
 import { FeedbackBox } from './Feedback'
 import { CoachAnswers, StatTiles } from './ReviewCompact'
 import { EMPTY_TARGETS, TargetsForm } from '@/features/coach/clients/TargetsForm'
+import { PlanVsEaten } from '@/features/coach/PlanVsEaten'
 
 const TABS = ['check-in', 'Training', 'Nutrition', 'Progress', 'Past check-ins'] as const
 
@@ -110,19 +112,14 @@ function Review({ r, tab, setTab }: { r: CheckinReview; tab: (typeof TABS)[numbe
             <section className="card">
               <div className="card-head">
                 <h2>Weight across the program</h2>
-                {r.projection_kg != null && (
-                  <span className="small muted">
-                    On pace for <b style={{ color: 'var(--ink)' }}>{bodyWeight(r.projection_kg, units)}</b> by week {r.weeks}{r.goal_kg != null ? ` · goal ${bodyWeight(r.goal_kg, units)}` : ''}
-                  </span>
-                )}
+                {r.goal_kg != null && <span className="small muted">Goal {bodyWeight(r.goal_kg, units)} · forecast in Insights below</span>}
               </div>
               {r.weights.some((w) => w.kg != null) ? (
                 <>
                   <LineChart points={pointsIn(r.weights, units)} unit={unitLabel(units)} goal={r.goal_kg != null ? bodyValue(r.goal_kg, units) : undefined}
-                    projection={r.projection_kg != null ? bodyValue(r.projection_kg, units) : undefined} area={false} height={200} highlight={`W${r.week}`} />
+                    area={false} height={200} highlight={`W${r.week}`} />
                   <div className="legend-line xs muted">
                     <span><i className="ll solid" /> Weekly average</span>
-                    {r.projection_kg != null && <span><i className="ll dashed" /> At current pace</span>}
                     {r.goal_kg != null && <span><i className="ll goal" /> Goal {bodyWeight(r.goal_kg, units)}</span>}
                   </div>
                 </>
@@ -143,6 +140,9 @@ function Review({ r, tab, setTab }: { r: CheckinReview; tab: (typeof TABS)[numbe
                 <p className="small muted">Weekly percentages appear after the first full week.</p>
               )}
             </section>
+
+            <ClientSignals clientId={r.client.id} />
+            <PlanVsEaten clientId={r.client.id} weekStart={r.week_start} firstName={r.client.first_name} />
 
             <section className="card">
               <div className="card-head">

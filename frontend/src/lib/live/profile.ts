@@ -13,7 +13,7 @@ async function get(): Promise<MyProfile> {
     // Column list on purpose: coach_notes is hidden from clients.
     db().from('client_profiles')
       .select('coach_id, goal, start_date, height_cm, start_weight_kg, goal_weight_kg, check_in_day, experience, training_days,'
-        + ' train_location, injuries, diet, foods_to_avoid, meals_per_day')
+        + ' train_location, injuries, diet, foods_to_avoid, meals_per_day, phone')
       .eq('user_id', uid).single(),
     targetsOn(uid, today()),
     db().from('programs').select('name, start_date, weeks').eq('client_id', uid).lte('start_date', today())
@@ -39,6 +39,7 @@ async function get(): Promise<MyProfile> {
     training_days: prof.training_days,
     train_location: prof.train_location,
     injuries: prof.injuries,
+    phone: prof.phone,
     coach: coach ? person(coach.id, coach.full_name) : null,
     check_in_day: prof.check_in_day,
     start_date: prof.start_date,
@@ -59,6 +60,7 @@ async function save(p: ProfilePatch) {
     training_days: p.training_days,
     train_location: p.train_location,
     injuries: p.injuries?.trim() || null,
+    phone: p.phone?.trim() || null,
   }).eq('user_id', uid))
   return { ok: true }
 }

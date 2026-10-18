@@ -5,7 +5,7 @@
 import type { BodyModel, ExerciseLevel, MealType, MuscleGroup, OnPlan } from '@/types/db'
 import type {
   CheckinDraft, CheckinLists, CheckinReview, ClientDetail, ClientHome, ClientProgress, ClientRow,
-  ChatMessage, CheckinSummary, ClientHistory, CoachClientRow, CoachDashboard, CoachNote, CoachQuestion, CoachSettings, Conversation,
+  ChatMessage, CheckinSummary, FoodDraft, PlanWeek, ClientHistory, CoachClientRow, CoachDashboard, CoachNote, CoachQuestion, CoachSettings, Conversation,
   MyProfile, NutritionRow, ProfilePatch, TargetVersion, DailyPatch, DaySummary, FoodDay, LastTime,
   LibraryExercise, Meal, MessageThread, MuscleDetail, NextProgram, Person, PlannedExercise, Program, ProgramClientRow,
   ProgramTemplateRow, ProgramWorkout, QueueItem, SetWrite, Targets, TodayWorkout, TrainWeek, WorkoutLog, WorkoutSummary,
@@ -17,6 +17,11 @@ import { ApiError } from './backend'
 import { minutesSince, OWN_WORKOUT, summarize, weekPlan, type PlanTemplate } from './workouts'
 import { generateProgram } from './programGen'
 import { mondayOf, plusDays, progressFrom, type Period, type ProgressDetail, type ProgressRaw } from './progress'
+import { weightSignals } from './forecast'
+import type { ExerciseDraft } from './exercises'
+import { SHARED_FOODS } from './foodList'
+import { isTrainingDay, mealsFor, type Food, type FoodLine, type MealPlan } from './meals'
+import { planForDay, planWeekFrom } from './mealPlans'
 import { programStatus, programWeekOf } from './programs'
 import { getCurrentUser } from './session'
 import { isDemo } from './supabase'
@@ -89,6 +94,7 @@ foodDays.set(TODAY, {
   next_targets: null,
   planned: ['breakfast', 'snack', 'lunch', 'dinner'],
   day_rating: 'yes',
+  plan: null,
   meals: [
     meal('m1', 'breakfast', '08:10', 'Greek yogurt, berries, granola', 420, 32, 48, 11),
     meal('m2', 'snack', '10:45', 'Protein shake', 210, 30, 12, 5),
@@ -105,6 +111,7 @@ function pastFoodDay(date: string): FoodDay {
     next_targets: null,
     planned: ['breakfast', 'lunch', 'dinner'],
     day_rating: 'yes',
+    plan: null,
     meals: [
       { ...meal(`${date}-b`, 'breakfast', '08:00', 'Oats, whey, banana', 480, 38, 66, 9), eaten_at: at('08:00') },
       { ...meal(`${date}-l`, 'lunch', '12:45', 'Turkey wrap and salad', 590, 44, 58, 18), eaten_at: at('12:45') },
@@ -224,7 +231,7 @@ const templates: PlanTemplate[] = [
 
 interface DemoSession {
   id: string; template_id: string | null; performed_on: string; started_at: string | null; finished_at: string | null
-  duration_min: number | null; notes: string; sets: SetWrite[]
+  duration_min: number | null; notes: string; sets: SetWrite[]; effort?: number | null; skipped?: boolean
 }
 
 /** Sets for one planned slot: [kg, reps, rpe] each. */
@@ -257,8 +264,8 @@ const sessionName = (s: DemoSession) => (s.template_id ? workoutNameOf(s.templat
 
 function sessionSummary(s: DemoSession): WorkoutSummary {
   return summarize(
-    { id: s.id, name: sessionName(s), performed_on: s.performed_on, finished: s.finished_at != null, duration_min: s.duration_min, notes: s.notes || null },
-    s.sets.map((x) => {
+    { id: s.id, name: sessionName(s), performed_on: s.performed_on, finished: s.finished_at != null, duration_min: s.duration_min, notes: s.notes || null, effort: s.effort ?? null, skipped: !!s.skipped },
+    s.sets.filter((x) => !x.is_warmup).map((x) => {
       const e = exerciseById.get(x.exercise_id)
       return { ...x, name: e?.name ?? 'Exercise', primary: e?.primary ?? [] }
     }),
@@ -539,7 +546,7 @@ function targetsOn(clientId: string, date: string): TargetVersion | null {
 function storedFoodDay(date: string): FoodDay {
   if (!foodDays.has(date)) {
     foodDays.set(date, date > TODAY
-      ? { date, targets, targets_from: null, next_targets: null, meals: [], planned: ['breakfast', 'lunch', 'dinner'], day_rating: null }
+      ? { date, targets, targets_from: null, next_targets: null, meals: [], planned: ['breakfast', 'lunch', 'dinner'], day_rating: null, plan: null }
       : pastFoodDay(date))
   }
   return foodDays.get(date)!
@@ -553,7 +560,7 @@ function demoProfile(): MyProfile {
   return {
     full_name: aisha.full_name, email: DEMO_ACCOUNTS.client.email, units: 'imperial', height_cm: 165, goal_weight_kg: 68, start_weight_kg: 74.6,
     goal: 'fat_loss', experience: a.experience, diet: 'none' as DietType, foods_to_avoid: null, meals_per_day: 4,
-    training_days: a.training_days, train_location: a.train_location, injuries: a.injuries,
+    training_days: a.training_days, train_location: a.train_location, injuries: a.injuries, phone: '+1 555 0100',
     coach, check_in_day: checkInDay[aisha.id] ?? 0, start_date: '2026-08-24',
     targets: cur ? structuredClone(cur) : null,
     program: prog ? { name: prog.name, week: programWeekOf(prog.start_date!, TODAY), weeks: prog.weeks } : null,
@@ -602,8 +609,10 @@ function aishaProgressRaw(): ProgressRaw {
               const e = exerciseById.get(x.exercise_id)
               const start = loads[x.exercise_id] ??= e?.equipment === 'bodyweight' ? 0 : e?.equipment === 'barbell' ? 60 : 12
               const kg = start ? Math.round((start + week * (e?.equipment === 'barbell' ? 2.5 : 1)) * 2) / 2 : null
-              return Array.from({ length: x.sets }, () => ({
-                exercise_id: x.exercise_id, name: x.name, kg, reps: Number(String(x.reps).match(/\d+/)?.[0] ?? 8), primary: e?.primary ?? [],
+              // RPE as logged: the planned RPE, half a point either side from set to set.
+              return Array.from({ length: x.sets }, (_, n) => ({
+                exercise_id: x.exercise_id, name: x.name, kg, reps: Number(String(x.reps).match(/\d+/)?.[0] ?? 8),
+                rpe: kg && x.rpe != null ? x.rpe + (((week + n) % 3) - 1) * 0.5 : null, primary: e?.primary ?? [],
               }))
             }),
           })
@@ -620,9 +629,9 @@ function aishaProgressRaw(): ProgressRaw {
     }
   }
   const { generated, ...rest } = progressRawCache
-  const logged = [...sessions.values()].filter((s) => s.finished_at).map((s) => ({
+  const logged = [...sessions.values()].filter((s) => s.finished_at && !s.skipped).map((s) => ({
     date: s.performed_on, template_id: s.template_id,
-    sets: s.sets.map((x) => ({ exercise_id: x.exercise_id, name: exerciseById.get(x.exercise_id)?.name ?? 'Exercise', kg: x.weight_kg, reps: x.reps, primary: exerciseById.get(x.exercise_id)?.primary ?? [] })),
+    sets: s.sets.filter((x) => !x.is_warmup).map((x) => ({ exercise_id: x.exercise_id, name: exerciseById.get(x.exercise_id)?.name ?? 'Exercise', kg: x.weight_kg, reps: x.reps, rpe: x.rpe, primary: exerciseById.get(x.exercise_id)?.primary ?? [] })),
   }))
   return {
     ...rest,
@@ -632,6 +641,61 @@ function aishaProgressRaw(): ProgressRaw {
     sessions: [...generated, ...logged.filter((s) => s.date >= '2026-09-27')],
   }
 }
+
+// Other clients' Progress for the coach's Insights card and list flags: their
+// weekly weights (three weigh-ins a week), nothing else logged. Goal weights are
+// made up from the goal: 6 kg down for fat loss, 4 kg up for muscle gain.
+const demoGoalKg = (r: Roster) =>
+  r.client.id === aisha.id ? 68 : r.goal === 'fat_loss' ? Math.round(r.weight_trend[0] - 6) : r.goal === 'muscle_gain' ? Math.round(r.weight_trend[0] + 4) : null
+
+function rosterProgressRaw(r: Roster): ProgressRaw {
+  if (r.client.id === aisha.id) return aishaProgressRaw()
+  const thisWeek = mondayOf(TODAY)
+  const start = plusDays(thisWeek, -7 * (r.week - 1))
+  const days: ProgressRaw['days'] = r.weight_trend.flatMap((kg, i) => {
+    const week = plusDays(thisWeek, -7 * (r.weight_trend.length - 1 - i))
+    return week < start ? [] : [0, 2, 4].map((n) => ({ date: plusDays(week, n), weight_kg: kg, steps: null, water_ml: null, sleep_h: null }))
+  }).filter((d) => d.date <= TODAY)
+  return { today: TODAY, start_date: start, goal_weight_kg: demoGoalKg(r), days, meals: [], targets: [], programs: [], sessions: [], check_ins: [] }
+}
+
+// ---------- Food list and meal plans ----------
+// The shared list (lib/foodList.ts, the same one the database seeds), the coach's
+// own foods, and meal plans kept in memory. Aisha has a plan from Sep 28.
+const foodSlug = (name: string) => `food-${name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/-$/, '')}`
+const demoFoods: Food[] = SHARED_FOODS.map((f) => ({
+  id: foodSlug(f.name), name: f.name, basis: f.basis, kcal: f.kcal, protein_g: f.protein_g, carbs_g: f.carbs_g, fat_g: f.fat_g,
+  servings: f.servings.map(([name, amount]) => ({ name, amount })),
+}))
+const foodNamed = (name: string) => demoFoods.find((f) => f.name === name)!
+const line = (name: string, quantity: number, unit?: string): FoodLine => ({ food: foodNamed(name), quantity, unit: unit ?? foodNamed(name).basis })
+
+const mealPlans: MealPlan[] = [
+  {
+    id: 'plan-aisha-1', client_id: aisha.id, name: 'Fat loss, 4 meals', effective_from: '2026-09-28', split: false,
+    meals: [
+      { day: 'every', meal_type: 'breakfast', notes: 'Any berries work; frozen is fine.', lines: [line('Oats', 60), line('Greek yogurt 2%', 1, '1 pot'), line('Berries, mixed', 1, '1 cup')] },
+      { day: 'every', meal_type: 'snack', notes: '', lines: [line('Whey protein', 1, '1 scoop'), line('Banana', 1, '1 medium'), line('Almonds', 1, '1 handful')] },
+      { day: 'every', meal_type: 'lunch', notes: 'Or swap rice for quinoa.', lines: [line('Chicken breast, grilled', 150), line('Rice, white, cooked', 1, '1 cup'), line('Mixed salad', 1, '1 bowl'), line('Olive oil', 1, '1 tbsp')] },
+      { day: 'every', meal_type: 'dinner', notes: 'Paneer tikka instead of salmon on veggie days.', lines: [line('Salmon fillet, cooked', 1, '1 fillet'), line('Sweet potato, baked', 1, '1 medium'), line('Broccoli, cooked', 1, '1 cup'), line('Roti (chapati)', 1, '1 roti')] },
+    ],
+  },
+  {
+    id: 'plan-template-1', client_id: null, name: 'Fat loss, 3 meals', effective_from: null, split: false,
+    meals: [
+      { day: 'every', meal_type: 'breakfast', notes: '', lines: [line('Egg', 2, '1 large egg'), line('Bread, wholemeal', 2, '1 slice'), line('Avocado', 1, '1/2 avocado')] },
+      { day: 'every', meal_type: 'lunch', notes: '', lines: [line('Dal (cooked lentils)', 1, '1 bowl'), line('Rice, brown, cooked', 1, '1 cup'), line('Plain yogurt (curd)', 1, '1 bowl')] },
+      { day: 'every', meal_type: 'dinner', notes: '', lines: [line('Chicken curry', 1, '1 bowl'), line('Roti (chapati)', 2, '1 roti'), line('Mixed salad', 1, '1 bowl')] },
+    ],
+  },
+]
+const clonePlan = (p: MealPlan): MealPlan => ({ ...p, meals: p.meals.map((m) => ({ ...m, lines: m.lines.map((l) => ({ ...l })) })) })
+const aishaTraining = (date: string) => {
+  const p = currentProgram(aisha.id)
+  return isTrainingDay(p ? [{ start_date: p.start_date, weeks: p.weeks, days: p.workouts.map((w) => w.day_of_week) }] : [], date)
+}
+const planOn = (clientId: string, date: string) =>
+  mealPlans.filter((p) => p.client_id === clientId && p.effective_from && p.effective_from <= date).sort((a, b) => b.effective_from!.localeCompare(a.effective_from!))[0]
 
 // ---------- Messages ----------
 // Aisha's conversation with the coach (with last week's check-in feedback),
@@ -652,6 +716,7 @@ const messages: DemoMessage[] = [
 ]
 
 const isCoach = () => getCurrentUser()?.role === 'coach'
+const demoAvatars: Record<string, string> = {}
 /** The signed-in demo user's kg/lb choice (the avatar menu). */
 const demoUnits = () => getCurrentUser()?.units ?? 'imperial'
 const everyone = () => [coach, aisha, ...roster.map((r) => r.client)]
@@ -679,7 +744,7 @@ export const demo = {
       days,
       week: { workouts_done: done, workouts_planned: 4, meals_on_plan: 17, meals_planned: 20, avg_protein_g: 128 },
       check_in: { status: checkin.status, minutes: 4, next_date: null },
-      workout: { ...workout, sets_done: sessions.get('w-today')?.sets.length ?? workout.sets_done },
+      workout: { ...workout, sets_done: sessions.get('w-today')?.sets.filter((x) => !x.is_warmup).length ?? workout.sets_done },
       food,
       habits: { ...habitsToday, weight_today: habitsToday.weight_today, steps_avg: 8450, water_ml_avg: 2100, sleep_avg: 6 + 50 / 60, note: 'Sleep dipped on Wednesday and Thursday.' },
       weight: {
@@ -702,8 +767,8 @@ export const demo = {
     return {
       today: TODAY, week: 6, weeks: current?.weeks ?? null, body_model: bodyModel, sets, has_program: !!current, units: demoUnits(),
       next_program: nextProgram(aisha.id),
-      plan: weekPlan(current ? planOf(current) : [], all.map((s) => ({ id: s.id, workout_template_id: s.template_id, performed_on: s.performed_on, finished: s.finished_at != null })), TODAY, current?.start_date ?? PROGRAM_START),
-      open_workout: open ? { id: open.id, name: sessionName(open), performed_on: open.performed_on, started_at: open.started_at, sets_done: open.sets.length } : null,
+      plan: weekPlan(current ? planOf(current) : [], all.map((s) => ({ id: s.id, workout_template_id: s.template_id, performed_on: s.performed_on, finished: s.finished_at != null, skipped: !!s.skipped, notes: s.notes })), TODAY, current?.start_date ?? PROGRAM_START),
+      open_workout: open ? { id: open.id, name: sessionName(open), performed_on: open.performed_on, started_at: open.started_at, sets_done: open.sets.filter((x) => !x.is_warmup).length } : null,
       recent: all.filter((s) => s.finished_at).sort((a, b) => b.performed_on.localeCompare(a.performed_on)).slice(0, 5).map(sessionSummary),
     }
   },
@@ -716,16 +781,36 @@ export const demo = {
   startWorkout(templateId: string | null) {
     const open = openSession()
     if (open) return { id: open.id }
+    for (const s of [...sessions.values()]) if (s.skipped && s.template_id === templateId && s.performed_on >= WEEK_START) sessions.delete(s.id)
     const id = crypto.randomUUID()
     sessions.set(id, { id, template_id: templateId, performed_on: TODAY, started_at: new Date().toISOString(), finished_at: null, duration_min: null, notes: '', sets: [] })
     return { id }
+  },
+
+  skipWorkout(templateId: string, date: string, reason: string) {
+    if ([...sessions.values()].some((s) => s.skipped && s.template_id === templateId && s.performed_on === date)) throw new ApiError(409, "It's already marked skipped.")
+    const id = crypto.randomUUID()
+    sessions.set(id, { id, template_id: templateId, performed_on: date, started_at: null, finished_at: new Date().toISOString(), duration_min: null, notes: reason.trim(), sets: [], skipped: true })
+    const day = days.find((d) => d.date === date)
+    if (day) day.workout = { name: sessionName(sessions.get(id)!), status: 'skipped' }
+    return { id }
+  },
+
+  undoSkip(id: string) {
+    const s = sessions.get(id)
+    if (s?.skipped) {
+      sessions.delete(id)
+      const day = days.find((d) => d.date === s.performed_on)
+      if (day?.workout?.status === 'skipped') day.workout = { name: sessionName(s), status: s.performed_on < TODAY ? 'skipped' : 'planned' }
+    }
+    return { ok: true }
   },
 
   workoutLog(id: string): WorkoutLog {
     const s = demoSession(id)
     return {
       id: s.id, name: sessionName(s), template_id: s.template_id, performed_on: s.performed_on, started_at: s.started_at,
-      finished_at: s.finished_at, duration_min: s.duration_min, notes: s.notes, units: demoUnits(),
+      finished_at: s.finished_at, duration_min: s.duration_min, notes: s.notes, effort: s.effort ?? null, units: demoUnits(),
       coach_notes: planWorkout(s.template_id)?.notes ?? null,
       plan: planWorkout(s.template_id)?.exercises ?? [],
       sets: s.sets.map((x) => ({ ...x })),
@@ -736,8 +821,8 @@ export const demo = {
     const out: Record<string, LastTime> = {}
     const before = [...sessions.values()].filter((s) => s.id !== sessionId).sort((a, b) => (b.started_at ?? '').localeCompare(a.started_at ?? ''))
     for (const id of exerciseIds) {
-      const s = before.find((x) => x.sets.some((l) => l.exercise_id === id))
-      if (s) out[id] = { date: s.performed_on, sets: s.sets.filter((l) => l.exercise_id === id).map(({ set_number, weight_kg, reps, rpe }) => ({ set_number, weight_kg, reps, rpe })) }
+      const s = before.find((x) => x.sets.some((l) => l.exercise_id === id && !l.is_warmup))
+      if (s) out[id] = { date: s.performed_on, sets: s.sets.filter((l) => l.exercise_id === id && !l.is_warmup).map(({ set_number, weight_kg, reps, rpe }) => ({ set_number, weight_kg, reps, rpe })) }
     }
     return out
   },
@@ -745,19 +830,20 @@ export const demo = {
   saveSet(sessionId: string, set: SetWrite) {
     const s = demoSession(sessionId)
     const i = s.sets.findIndex((x) => x.exercise_id === set.exercise_id && x.set_number === set.set_number)
+    // The body map counts working sets only, so a set switched to or from warm-up moves the count.
+    const counted = (x: SetWrite | undefined) => (x && !x.is_warmup ? 1 : 0)
+    const change = counted(set) - counted(i >= 0 ? s.sets[i] : undefined)
     if (i >= 0) s.sets[i] = { ...set }
-    else {
-      s.sets.push({ ...set })
-      if (s.performed_on >= WEEK_START) countSets(set.exercise_id, 1)
-    }
+    else s.sets.push({ ...set })
+    if (change && s.performed_on >= WEEK_START) countSets(set.exercise_id, change)
     return { ok: true }
   },
 
   deleteSet(sessionId: string, exerciseId: string, setNumber: number) {
     const s = demoSession(sessionId)
-    const before = s.sets.length
-    s.sets = s.sets.filter((x) => !(x.exercise_id === exerciseId && x.set_number === setNumber))
-    if (s.sets.length < before && s.performed_on >= WEEK_START) countSets(exerciseId, -1)
+    const gone = s.sets.find((x) => x.exercise_id === exerciseId && x.set_number === setNumber)
+    s.sets = s.sets.filter((x) => x !== gone)
+    if (gone && !gone.is_warmup && s.performed_on >= WEEK_START) countSets(exerciseId, -1)
     return { ok: true }
   },
 
@@ -766,11 +852,12 @@ export const demo = {
     return { ok: true }
   },
 
-  finishWorkout(id: string): WorkoutSummary {
+  finishWorkout(id: string, effort: number | null): WorkoutSummary {
     const s = demoSession(id)
     if (!s.finished_at) {
       if (!s.sets.length) throw new ApiError(409, 'Tick at least one set first, or discard the workout.')
       s.finished_at = new Date().toISOString()
+      s.effort = effort != null && Number.isInteger(effort) && effort >= 1 && effort <= 10 ? effort : null
       s.duration_min = minutesSince(s.started_at)
       const day = days.find((d) => d.date === s.performed_on)
       if (day && s.template_id) day.workout = { name: sessionName(s), status: 'done' }
@@ -781,7 +868,7 @@ export const demo = {
   discardWorkout(id: string) {
     const s = demoSession(id)
     if (!s.finished_at) {
-      for (const x of s.sets) countSets(x.exercise_id, -1)
+      for (const x of s.sets) if (!x.is_warmup) countSets(x.exercise_id, -1)
       sessions.delete(id)
     }
     return { ok: true }
@@ -802,12 +889,77 @@ export const demo = {
 
   foodDay(date: string): FoodDay {
     const day = storedFoodDay(date)
+    const plan = planOn(aisha.id, date)
     const cur = targetsOn(aisha.id, date)
     const next = (targetVersions[aisha.id] ?? []).filter((v) => v.effective_from > date).sort((a, b) => a.effective_from.localeCompare(b.effective_from))[0]
     return {
       ...day, meals: day.meals, targets: cur?.targets ?? null, targets_from: cur?.effective_from ?? null,
       next_targets: next ? { targets: next.targets, from: next.effective_from } : null,
+      plan: plan ? planForDay(plan, aishaTraining(date)) : null,
     }
+  },
+
+  // ----- food list and meal plans -----
+  foods(): Food[] {
+    return [...demoFoods].sort((a, b) => a.name.localeCompare(b.name))
+  },
+
+  saveFood(d: FoodDraft): { id: string } {
+    if (!isCoach()) throw new ApiError(403, "You don't have access to that.")
+    const name = d.name.trim()
+    if (demoFoods.some((f) => f.name.toLowerCase() === name.toLowerCase() && f.id !== d.id)) throw new ApiError(409, 'There\u2019s already a food with this name.')
+    const food: Food = { id: d.id ?? `food-own-${crypto.randomUUID().slice(0, 8)}`, name, basis: d.basis, kcal: d.kcal, protein_g: d.protein_g, carbs_g: d.carbs_g, fat_g: d.fat_g, servings: d.servings.map((s) => ({ ...s })), custom: true }
+    const i = demoFoods.findIndex((f) => f.id === food.id)
+    if (i >= 0) {
+      if (!demoFoods[i].custom) throw new ApiError(404, "That food doesn't exist (or isn't yours).")
+      demoFoods[i] = food
+      for (const p of mealPlans) for (const m of p.meals) for (const l of m.lines) if (l.food.id === food.id) l.food = food
+    } else demoFoods.push(food)
+    return { id: food.id! }
+  },
+
+  deleteFood(id: string) {
+    const f = demoFoods.find((x) => x.id === id)
+    if (!f?.custom) throw new ApiError(404, "That food doesn't exist (or isn't yours).")
+    if (mealPlans.some((p) => p.meals.some((m) => m.lines.some((l) => l.food.id === id)))) throw new ApiError(409, "It's in a meal plan, so it can't be deleted. Rename it instead.")
+    demoFoods.splice(demoFoods.indexOf(f), 1)
+    return { ok: true }
+  },
+
+  mealPlans(clientId: string): MealPlan[] {
+    return mealPlans.filter((p) => p.client_id === clientId).sort((a, b) => b.effective_from!.localeCompare(a.effective_from!)).map(clonePlan)
+  },
+
+  mealPlanTemplates(): MealPlan[] {
+    return mealPlans.filter((p) => p.client_id == null).sort((a, b) => a.name.localeCompare(b.name)).map(clonePlan)
+  },
+
+  saveMealPlan(p: MealPlan): { id: string } {
+    if (!isCoach()) throw new ApiError(403, "You don't have access to that.")
+    if (p.client_id && !p.effective_from) throw new ApiError(409, 'Choose when the plan starts.')
+    if (p.client_id && p.effective_from! < addDays(TODAY, -1)) throw new ApiError(409, 'A plan starts today or later; earlier days keep the plan they had.')
+    const same = p.client_id ? mealPlans.find((x) => x.client_id === p.client_id && x.effective_from === p.effective_from) : mealPlans.find((x) => x.id === p.id)
+    const saved = { ...clonePlan(p), id: same?.id ?? `plan-${crypto.randomUUID().slice(0, 8)}` }
+    if (same) mealPlans.splice(mealPlans.indexOf(same), 1, saved)
+    else mealPlans.push(saved)
+    return { id: saved.id }
+  },
+
+  deleteMealPlan(id: string) {
+    const i = mealPlans.findIndex((p) => p.id === id)
+    if (i >= 0) mealPlans.splice(i, 1)
+    return { ok: true }
+  },
+
+  planWeek(clientId: string, weekStart: string): PlanWeek {
+    const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)).filter((d) => d <= TODAY)
+    const logged = clientId === aisha.id
+      ? days.flatMap((d) => storedFoodDay(d).meals.map((m) => ({ date: d, meal_type: m.meal_type, on_plan: m.on_plan, nutrition: { calories: m.calories, protein_g: m.protein_g, carbs_g: m.carbs_g, fat_g: m.fat_g } })))
+      : []
+    const r = roster.find((x) => x.client.id === clientId)
+    const p = currentProgram(clientId)
+    return planWeekFrom(weekStart, mealPlans.filter((x) => x.client_id === clientId).map(clonePlan), logged, mealsFor(clientId === aisha.id ? 4 : 3),
+      p ? [{ start_date: p.start_date, weeks: p.weeks, days: p.workouts.map((w) => w.day_of_week) }] : [], r ? targetsOn(clientId, TODAY)?.targets ?? null : null)
   },
 
   rateDay(date: string, rating: OnPlan) {
@@ -817,7 +969,7 @@ export const demo = {
 
   logMeal(date: string, m: Omit<Meal, 'id'>) {
     const day = storedFoodDay(date)
-    const saved = { ...m, id: crypto.randomUUID() }
+    const saved = { ...m, items: m.items?.map((x) => ({ ...x })), id: crypto.randomUUID() }
     day.meals.push(saved)
     day.meals.sort((a, b) => a.eaten_at.localeCompare(b.eaten_at))
     return saved
@@ -1013,7 +1165,7 @@ export const demo = {
     const r = roster.find((x) => x.client.id === clientId) ?? roster[0]
     return {
       client: r.client, email: `${r.client.first_name.toLowerCase()}@example.com`, setup_done: true, goal: r.goal,
-      start_date: addDays(WEEK_START, -(r.week - 1) * 7), week: r.week, date_of_birth: '1996-03-14', height_cm: 165,
+      start_date: addDays(WEEK_START, -(r.week - 1) * 7), week: r.week, date_of_birth: '1996-03-14', phone: r.client.id === aisha.id ? (profileEdits.phone ?? '+1 555 0100') : '+1 555 0123', height_cm: 165,
       start_weight_kg: r.weight_trend[0] ?? null, goal_weight_kg: r.client.id === aisha.id ? 68 : null,
       ...answersOf(r.client.id), diet: 'none', foods_to_avoid: null, meals_per_day: 4,
       targets: targetsOn(clientId, TODAY)?.targets ?? null, targets_from: targetsOn(clientId, TODAY)?.effective_from ?? null,
@@ -1034,8 +1186,62 @@ export const demo = {
     return { ok: true }
   },
 
+  // ----- profile pictures (in memory: the picked image's blob: URL) -----
+  avatars(): Record<string, string> {
+    return { ...demoAvatars }
+  },
+  setAvatar(localUrl: string) {
+    const me = getCurrentUser()
+    if (!me) throw new ApiError(401, 'Log in first.')
+    // The demo client is shown as Aisha everywhere, so her id carries the photo too.
+    for (const id of new Set([me.id, isCoach() ? coach.id : aisha.id])) demoAvatars[id] = localUrl
+    return { ok: true }
+  },
+  removeAvatar() {
+    const me = getCurrentUser()
+    for (const id of [me?.id, isCoach() ? coach.id : aisha.id]) if (id) delete demoAvatars[id]
+    return { ok: true }
+  },
+
+  // ----- the coach's own exercises (kept in memory, added to the library) -----
+  saveExercise(d: ExerciseDraft): { id: string } {
+    if (!isCoach()) throw new ApiError(403, 'Only coaches can add exercises.')
+    const name = d.name.trim()
+    const clash = exerciseLibrary.find((e) => e.name.toLowerCase() === name.toLowerCase() && e.id !== d.id)
+    if (clash) throw new ApiError(409, clash.custom ? 'You already have an exercise with this name.' : 'The library already has this one. Pick it from the list instead.')
+    const e: LibraryExercise = {
+      id: d.id ?? `ex-custom-${crypto.randomUUID().slice(0, 8)}`, name, level: d.level, equipment: d.equipment.trim(),
+      cue: d.cue.trim() || null, primary: [...d.primary], secondary: [...d.secondary], custom: true,
+    }
+    const i = exerciseLibrary.findIndex((x) => x.id === e.id)
+    if (i >= 0) {
+      if (!exerciseLibrary[i].custom) throw new ApiError(404, "That exercise doesn't exist (or isn't yours).")
+      exerciseLibrary[i] = e
+    } else exerciseLibrary.push(e)
+    exerciseLibrary.sort((a, b) => a.name.localeCompare(b.name))
+    exerciseById.set(e.id, e)
+    return { id: e.id }
+  },
+
+  deleteExercise(id: string) {
+    const e = exerciseById.get(id)
+    if (!e?.custom) throw new ApiError(404, "That exercise doesn't exist (or isn't yours).")
+    const used = [...programs.values()].some((p) => p.workouts.some((w) => w.exercises.some((x) => x.exercise_id === id)))
+      || [...sessions.values()].some((s) => s.sets.some((x) => x.exercise_id === id))
+    if (used) throw new ApiError(409, "It's in a program or a logged workout, so it can't be deleted. Rename it instead.")
+    exerciseLibrary.splice(exerciseLibrary.indexOf(e), 1)
+    exerciseById.delete(id)
+    return { ok: true }
+  },
+
   progressDetail(period: Period): ProgressDetail {
     return progressFrom(aishaProgressRaw(), period)
+  },
+
+  clientProgress(clientId: string, period: Period): ProgressDetail {
+    const r = roster.find((x) => x.client.id === clientId)
+    if (!r) throw new ApiError(404, "That client isn't one of yours.")
+    return progressFrom(rosterProgressRaw(r), period)
   },
 
   // ----- coach pages -----
@@ -1048,6 +1254,11 @@ export const demo = {
         has_targets: !!targetsOn(r.client.id, TODAY),
         last_check_in: r.checked_in ? { id: ciId(r), week_start: WEEK_START, status: r.reviewed ? 'reviewed' : 'submitted' } : null,
         last_activity: addDays(TODAY, -(roster.indexOf(r) % 4)),
+        signals: (() => {
+          const raw = rosterProgressRaw(r)
+          const { forecast, plateau } = weightSignals(raw.days.map((d) => ({ date: d.date, kg: d.weight_kg })), TODAY, raw.start_date, raw.goal_weight_kg)
+          return { forecast, plateau }
+        })(),
       }
     })
   },

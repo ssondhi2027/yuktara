@@ -19,9 +19,15 @@ import { liveClient } from './live/client'
 import { liveCoach } from './live/coach'
 import { liveMessages } from './live/messages'
 import type { Period, ProgressDetail } from './progress'
+import type { Plateau, WeightForecast } from './forecast'
 import { livePrograms } from './live/programs'
 import { liveManage } from './live/manage'
 import { liveProfile } from './live/profile'
+import { liveExercises } from './live/exercises'
+import { liveAvatars } from './live/avatars'
+import type { Basis, Food, FoodLine, MealItem, MealPlan, Nutrition, PlanDay, PlanVsEatenRow, Serving } from './meals'
+import { liveMealPlans } from './live/mealplans'
+import type { ExerciseDraft } from './exercises'
 import { draftFromAnswers } from './programs'
 import { today } from './dates'
 import { isDemo } from './supabase'
@@ -67,6 +73,8 @@ export interface Meal {
   fat_g: number
   on_plan: OnPlan
   photo_url: string | null
+  /** the foods in it, if the client listed them (the totals above add them up) */
+  items?: MealItem[]
 }
 
 export interface FoodDay {
@@ -80,6 +88,28 @@ export interface FoodDay {
   meals: Meal[]
   planned: MealType[]
   day_rating: OnPlan | null
+  /** the coach's meal plan for this day (training- or rest-day plan if split); null without one */
+  plan: DayPlan | null
+}
+
+/** One meal of the day's plan, with its calories and macros. */
+export interface DayPlanMeal { meal_type: MealType; notes: string; lines: FoodLine[]; nutrition: Nutrition }
+/** The plan as one day uses it. */
+export interface DayPlan { from: string; day: PlanDay; meals: DayPlanMeal[]; nutrition: Nutrition }
+
+/** A coach's own food: nutrition per 100 g (or ml) and named servings. */
+export interface FoodDraft { id: string | null; name: string; basis: Basis; kcal: number; protein_g: number; carbs_g: number; fat_g: number; servings: Serving[] }
+
+/** Planned vs eaten for a client's week (coach). */
+export interface PlanWeek {
+  week_start: string
+  /** days of the week so far */
+  days: number
+  /** the plan in force at the end of the period shown */
+  plan: MealPlan | null
+  types: MealType[]
+  rows: PlanVsEatenRow[]
+  targets: Targets | null
 }
 
 export interface Habits {
@@ -157,6 +187,8 @@ export interface LibraryExercise {
   cue: string | null
   primary: MuscleGroup[]
   secondary: MuscleGroup[]
+  /** the coach's own exercise (exercises.created_by set), not the shared library */
+  custom?: boolean
 }
 
 /** One slot of a planned workout, with this week's program swaps applied. */
@@ -173,7 +205,7 @@ export interface PlannedExercise {
   notes: string | null
 }
 
-export type PlannedStatus = 'done' | 'in_progress' | 'today' | 'missed' | 'upcoming' | 'anytime'
+export type PlannedStatus = 'done' | 'in_progress' | 'today' | 'missed' | 'upcoming' | 'anytime' | 'skipped'
 
 export interface PlannedWorkout {
   template_id: string
@@ -183,8 +215,10 @@ export interface PlannedWorkout {
   notes: string | null
   exercises: PlannedExercise[]
   status: PlannedStatus
-  /** the session that did it (done or in progress) */
+  /** the session that did it (done or in progress), or the skip */
   session_id: string | null
+  /** why it was skipped, if the client said */
+  skip_reason: string | null
 }
 
 export interface OpenWorkout { id: string; name: string; performed_on: string; started_at: string | null; sets_done: number }
@@ -192,7 +226,12 @@ export interface OpenWorkout { id: string; name: string; performed_on: string; s
 export interface LoggedSet { set_number: number; weight_kg: number | null; reps: number | null; rpe: number | null }
 
 /** A set as saved: which exercise, and which planned slot it was logged against (null = added by the client). */
-export interface SetWrite extends LoggedSet { exercise_id: string; template_exercise_id: string | null }
+export interface SetWrite extends LoggedSet {
+  exercise_id: string
+  template_exercise_id: string | null
+  /** a warm-up set: shown, but left out of set counts, volume, the body map, best lifts and Progress */
+  is_warmup?: boolean
+}
 
 export interface WorkoutLog {
   id: string
@@ -203,6 +242,8 @@ export interface WorkoutLog {
   finished_at: string | null
   duration_min: number | null
   notes: string
+  /** "How hard was this workout?" 1–10, answered when finishing; null if skipped */
+  effort: number | null
   units: UnitSystem
   /** the coach's note on this workout (workout_templates.notes) */
   coach_notes: string | null
@@ -226,6 +267,10 @@ export interface WorkoutSummary {
   volume_kg: number
   muscles: MuscleGroup[]
   notes: string | null
+  /** "How hard was this workout?" 1–10, from Finish; null if skipped */
+  effort: number | null
+  /** marked skipped instead of done (no sets); `notes` holds the reason */
+  skipped: boolean
   exercises: { name: string; sets: LoggedSet[] }[]
 }
 
@@ -356,6 +401,8 @@ export interface CoachClientRow {
   last_check_in: { id: string; week_start: string; status: CheckinStatus } | null
   /** date of the client's latest meal, daily log or workout */
   last_activity: string | null
+  /** weight forecast and plateau over the last 12 weeks (lib/forecast.ts); null before setup */
+  signals: { forecast: WeightForecast; plateau: Plateau | null } | null
 }
 
 /** The Clients page detail, on top of ClientDetail. */
@@ -406,6 +453,7 @@ export interface MyProfile {
   training_days: number | null
   train_location: TrainLocation | null
   injuries: string | null
+  phone: string | null
   /** what the coach controls (read-only here) */
   coach: Person | null
   check_in_day: number
@@ -425,6 +473,7 @@ export interface ProfilePatch {
   training_days: number | null
   train_location: TrainLocation | null
   injuries: string | null
+  phone: string | null
 }
 
 // ---------- Messages ----------
@@ -596,6 +645,7 @@ export interface ClientDetail {
   start_date: string
   week: number
   date_of_birth: string | null
+  phone: string | null
   height_cm: number | null
   start_weight_kg: number | null
   goal_weight_kg: number | null
@@ -637,6 +687,11 @@ export const api = {
   /** KPIs and chart series for the Progress page (lib/progress.ts), for 4 weeks, 12 weeks or since start. */
   progressDetail: (period: Period): Promise<ProgressDetail> =>
     isDemo ? wait(demo.progressDetail(period)) : liveClient.progressDetail(period),
+  /** Profile pictures as signed URLs by user id: the signed-in person, their coach, the coach's clients. */
+  avatars: (): Promise<Record<string, string>> => (isDemo ? wait(demo.avatars()) : liveAvatars.all()),
+  /** Uploads a new profile picture from a local (blob:) URL. */
+  setAvatar: (localUrl: string) => (isDemo ? wait(demo.setAvatar(localUrl)) : liveAvatars.set(localUrl)),
+  removeAvatar: () => (isDemo ? wait(demo.removeAvatar()) : liveAvatars.remove()),
   setBodyModel: (m: BodyModel) => (isDemo ? wait(demo.setBodyModel(m)) : liveClient.setBodyModel(m)),
 
   // workouts (client writes straight to Supabase, RLS: only their own sessions and sets)
@@ -651,7 +706,13 @@ export const api = {
   deleteSet: (sessionId: string, exerciseId: string, setNumber: number) =>
     isDemo ? wait(demo.deleteSet(sessionId, exerciseId, setNumber)) : liveClient.deleteSet(sessionId, exerciseId, setNumber),
   saveWorkoutNote: (id: string, notes: string) => (isDemo ? wait(demo.saveWorkoutNote(id, notes)) : liveClient.saveWorkoutNote(id, notes)),
-  finishWorkout: (id: string): Promise<WorkoutSummary> => (isDemo ? wait(demo.finishWorkout(id)) : liveClient.finishWorkout(id)),
+  /** Finishes the session; `effort` (1–10, or null if skipped) is saved in the same update. */
+  finishWorkout: (id: string, effort: number | null): Promise<WorkoutSummary> =>
+    isDemo ? wait(demo.finishWorkout(id, effort)) : liveClient.finishWorkout(id, effort),
+  /** Marks a planned workout skipped for `date` (this week), with an optional reason. */
+  skipWorkout: (templateId: string, date: string, reason: string): Promise<{ id: string }> =>
+    isDemo ? wait(demo.skipWorkout(templateId, date, reason)) : liveClient.skipWorkout(templateId, date, reason),
+  undoSkip: (sessionId: string) => (isDemo ? wait(demo.undoSkip(sessionId)) : liveClient.undoSkip(sessionId)),
   /** Deletes an open session with nothing logged. */
   discardWorkout: (id: string) => (isDemo ? wait(demo.discardWorkout(id)) : liveClient.discardWorkout(id)),
 
@@ -671,6 +732,9 @@ export const api = {
 
   // coach pages: Clients, Nutrition plans, Settings
   coachClients: (): Promise<CoachClientRow[]> => (isDemo ? wait(demo.coachClients()) : liveManage.clients()),
+  /** A client's Progress numbers for their coach (same maths as the client's page), for the Insights card. */
+  clientProgress: (clientId: string, period: Period): Promise<ProgressDetail> =>
+    isDemo ? wait(demo.clientProgress(clientId, period)) : liveClient.clientProgress(clientId, period),
   clientHistory: (clientId: string): Promise<ClientHistory> => (isDemo ? wait(demo.clientHistory(clientId)) : liveManage.history(clientId)),
   setClientStatus: (clientId: string, status: ClientStatus) =>
     isDemo ? wait(demo.setClientStatus(clientId, status)) : liveManage.setStatus(clientId, status),
@@ -710,7 +774,8 @@ export const api = {
   /** A first draft built in the browser from the client's setup answers (programGen.ts). Not saved. */
   generateProgram: async (clientId: string): Promise<Program> => {
     const [detail, library] = await Promise.all([api.clientDetail(clientId), api.exerciseLibrary()])
-    return draftFromAnswers(detail, library, today())
+    // The generator picks from the shared library only; the coach adds their own exercises by hand.
+    return draftFromAnswers(detail, library.filter((e) => !e.custom), today())
   },
   saveProgram: (p: Program): Promise<{ id: string }> => (isDemo ? wait(demo.saveProgram(p)) : livePrograms.save(p)),
   /** Makes it the client's program from `start`; the previous one stops there. */
@@ -718,6 +783,24 @@ export const api = {
   /** clientId null = save as a template; otherwise a new draft for that client. */
   copyProgram: (id: string, clientId: string | null): Promise<{ id: string }> =>
     isDemo ? wait(demo.copyProgram(id, clientId)) : livePrograms.copy(id, clientId),
+  /** The coach's own exercise, with its muscles (save_exercise, 0018). They appear in the library for the coach and their clients. */
+  saveExercise: (d: ExerciseDraft): Promise<{ id: string }> => (isDemo ? wait(demo.saveExercise(d)) : liveExercises.save(d)),
+  /** Refused while a program or a logged workout uses it. */
+  deleteExercise: (id: string) => (isDemo ? wait(demo.deleteExercise(id)) : liveExercises.remove(id)),
+  // food list and meal plans (0022, 0023)
+  /** The shared food list plus the coach's own foods (for a client: their coach's). */
+  foods: (): Promise<Food[]> => (isDemo ? wait(demo.foods()) : liveMealPlans.foods()),
+  saveFood: (d: FoodDraft): Promise<{ id: string }> => (isDemo ? wait(demo.saveFood(d)) : liveMealPlans.saveFood(d)),
+  /** Refused while a meal plan uses it. */
+  deleteFood: (id: string) => (isDemo ? wait(demo.deleteFood(id)) : liveMealPlans.deleteFood(id)),
+  /** A client's meal plan versions, newest first. */
+  mealPlans: (clientId: string): Promise<MealPlan[]> => (isDemo ? wait(demo.mealPlans(clientId)) : liveMealPlans.plans(clientId)),
+  mealPlanTemplates: (): Promise<MealPlan[]> => (isDemo ? wait(demo.mealPlanTemplates()) : liveMealPlans.templates()),
+  /** A client plan from its date (replacing a version on the same date), or a template (client_id null). */
+  saveMealPlan: (p: MealPlan): Promise<{ id: string }> => (isDemo ? wait(demo.saveMealPlan(p)) : liveMealPlans.savePlan(p)),
+  deleteMealPlan: (id: string) => (isDemo ? wait(demo.deleteMealPlan(id)) : liveMealPlans.deletePlan(id)),
+  /** Planned vs eaten per meal for the week starting `weekStart`. */
+  planWeek: (clientId: string, weekStart: string): Promise<PlanWeek> => (isDemo ? wait(demo.planWeek(clientId, weekStart)) : liveMealPlans.week(clientId, weekStart)),
   /** Drafts and templates only. */
   deleteProgram: (id: string) => (isDemo ? wait(demo.deleteProgram(id)) : livePrograms.remove(id)),
 

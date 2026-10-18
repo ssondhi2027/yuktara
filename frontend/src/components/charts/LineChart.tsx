@@ -19,6 +19,12 @@ interface Props {
   daily?: { at: number; kg: number }[]
   /** tooltip text per point (tap or hover); null = nothing to show */
   tips?: (string | null)[]
+  /**
+   * A forecast: a dashed line through `value` with a shaded range from `lo` to
+   * `hi` (e.g. an 80% band). `at` is a point index; start it at the last real
+   * point with lo = hi = value so the band fans out from there.
+   */
+  band?: { at: number; value: number; lo: number; hi: number }[]
 }
 
 /**
@@ -26,7 +32,7 @@ interface Props {
  * Drawn in a fixed 600-wide viewBox and stretched horizontally, so strokes
  * use non-scaling-stroke and dots are HTML-free circles sized per height.
  */
-export function LineChart({ points, goal, projection, area = true, height = 180, showLabels = true, highlight, goalLabel, valueLabel, unit = 'kg', daily, tips }: Props) {
+export function LineChart({ points, goal, projection, area = true, height = 180, showLabels = true, highlight, goalLabel, valueLabel, unit = 'kg', daily, tips, band }: Props) {
   const [ref, width] = useWidth<HTMLDivElement>()
   const [active, setActive] = useState<number | null>(null)
   const W = 600
@@ -37,7 +43,7 @@ export function LineChart({ points, goal, projection, area = true, height = 180,
   const real = points
     .map((p, i) => ({ kg: p.kg, i }))
     .filter((p): p is { kg: number; i: number } => p.kg != null)
-  const values = [...real.map((p) => p.kg), ...(goal != null ? [goal] : []), ...(projection != null ? [projection] : []), ...(daily ?? []).map((d) => d.kg)]
+  const values = [...real.map((p) => p.kg), ...(goal != null ? [goal] : []), ...(projection != null ? [projection] : []), ...(daily ?? []).map((d) => d.kg), ...(band ?? []).flatMap((b) => [b.lo, b.hi])]
   const max = Math.max(...values) + 0.5
   const min = Math.min(...values) - 0.5
   const x = (i: number) => padX + (i * (W - padX * 2)) / Math.max(1, points.length - 1)
@@ -52,6 +58,10 @@ export function LineChart({ points, goal, projection, area = true, height = 180,
     setActive(Math.min(points.length - 1, Math.max(0, i)))
   }
   const areaPath = last ? `${line} L${x(last.i)} ${H - padBottom} L${x(real[0].i)} ${H - padBottom} Z` : ''
+  const bandArea = band && band.length > 1
+    ? `${band.map((b, k) => `${k ? 'L' : 'M'}${x(b.at)} ${y(b.hi)}`).join(' ')} ${[...band].reverse().map((b) => `L${x(b.at)} ${y(b.lo)}`).join(' ')} Z`
+    : ''
+  const bandLine = band && band.length > 1 ? band.map((b, k) => `${k ? 'L' : 'M'}${x(b.at)} ${y(b.value)}`).join(' ') : ''
 
   return (
     <div className="line-chart" ref={ref} style={{ height: H }}
@@ -69,6 +79,8 @@ export function LineChart({ points, goal, projection, area = true, height = 180,
         {projection != null && last && (
           <line x1={x(last.i)} y1={y(last.kg)} x2={x(points.length - 1)} y2={y(projection)} stroke="var(--chart)" strokeWidth="2" strokeDasharray="6 6" vectorEffect="non-scaling-stroke" />
         )}
+        {bandArea && <path d={bandArea} fill="var(--chart)" opacity={0.14} />}
+        {bandLine && <path d={bandLine} fill="none" stroke="var(--chart)" strokeWidth="2" strokeDasharray="6 6" vectorEffect="non-scaling-stroke" />}
         <path d={line} fill="none" stroke="var(--chart)" strokeWidth="3" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
       </svg>
       {/* Dots and labels are HTML so they stay round and crisp when the SVG stretches. */}

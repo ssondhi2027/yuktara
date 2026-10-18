@@ -2,7 +2,6 @@
 .settings-page { max-width: 860px; }
 .settings-grid { display: grid; gap: 14px; }
 @media (min-width: 760px) { .settings-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
-.label-like { font-size: 13px; font-weight: 600; }
 .question-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .question-row { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border-radius: 14px; background: var(--surface-2); }
 .question-row.off .input { opacity: .6; }

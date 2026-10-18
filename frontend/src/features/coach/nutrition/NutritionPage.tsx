@@ -16,6 +16,7 @@ import '@/features/coach/review/review.css'
 import '@/features/coach/dashboard/dashboard.css'
 import '@/features/coach/clients/clients.css'
 import './nutrition.css'
+import { MealPlanEditor } from './MealPlanEditor'
 
 /** Keys for everything that shows targets (the client's own screens refetch on their side). */
 const TARGET_KEYS = [['nutrition-rows'], ['target-history'], ['client-detail'], ['coach-clients'], ['coach-dashboard'], ['review']]
@@ -44,7 +45,7 @@ export function NutritionPage() {
     <div className="split clients-split">
       <aside className="split-list"><TargetsList selected={clientId} /></aside>
       <div className="split-detail">
-        {detail ?? <div className="builder-pick"><b>Pick a client</b><p className="small muted">Set calories, macros, water, steps and sleep, from today or a later date.</p></div>}
+        {detail ?? <div className="builder-pick"><b>Pick a client</b><p className="small muted">Set calories, macros, water, steps and sleep, and a meal plan, from today or a later date.</p></div>}
       </div>
     </div>
   )
@@ -200,6 +201,8 @@ function TargetsEditor({ id }: { id: string }) {
           </section>
         </aside>
       </div>
+
+      <MealPlanEditor c={c} key={`plan-${id}`} />
     </div>
   )
 }

@@ -10,6 +10,7 @@ import type {
 import { ApiError } from '../backend'
 import { addDays, today } from '../dates'
 import { avg, db, localDate, must, myId, person, programWeek, round1, targetsFromRow, weekMonday } from './shared'
+import { weightSignals, windowStart } from '../forecast'
 
 const TARGET_COLS = 'client_id, calories, protein_g, carbs_g, fat_g, water_ml, steps, sleep_hours, effective_from'
 
@@ -38,19 +39,42 @@ async function lastActivity(ids: string[]): Promise<Map<string, string>> {
   return latestBy(all, (r) => r.d)
 }
 
+/**
+ * Weigh-ins of these clients from `from`, for the Clients list flags. Paged:
+ * PostgREST returns at most 1000 rows a request.
+ */
+async function weighIns(ids: string[], from: string): Promise<{ client_id: string; date: string; kg: number }[]> {
+  const out: { client_id: string; date: string; kg: number }[] = []
+  for (let page = 0; ; page++) {
+    const rows = must(await db().from('daily_logs').select('client_id, log_date, weight_kg')
+      .in('client_id', ids).gte('log_date', from).not('weight_kg', 'is', null)
+      .order('client_id').order('log_date').range(page * 1000, page * 1000 + 999)) as any[]
+    out.push(...rows.map((r) => ({ client_id: r.client_id, date: r.log_date, kg: Number(r.weight_kg) })))
+    if (rows.length < 1000) return out
+  }
+}
+
+function flagSignals(days: { date: string; kg: number }[], t: string, start: string, goal: unknown): CoachClientRow['signals'] {
+  const { forecast, plateau } = weightSignals(days, t, start, goal == null ? null : Number(goal))
+  return { forecast, plateau }
+}
+
 async function clients(): Promise<CoachClientRow[]> {
   const uid = await myId()
   const profs = must(await db().from('client_profiles')
-    .select('user_id, status, goal, start_date, setup_completed_at').eq('coach_id', uid)) as any[]
+    .select('user_id, status, goal, start_date, goal_weight_kg, setup_completed_at').eq('coach_id', uid)) as any[]
   const ids = profs.map((p) => p.user_id)
   if (!ids.length) return []
   const t = today()
-  const [users, programs, targets, checkIns, activity] = await Promise.all([
+  // The forecasts' 12-week window, for the earliest possible start.
+  const from = windowStart(t, '2000-01-03')
+  const [users, programs, targets, checkIns, activity, weights] = await Promise.all([
     db().from('users').select('id, full_name').in('id', ids),
     db().from('programs').select('id, client_id, name, start_date').in('client_id', ids).lte('start_date', t).order('start_date', { ascending: false }),
     db().from('nutrition_targets').select('client_id').in('client_id', ids).lte('effective_from', t),
     db().from('check_ins').select('id, client_id, week_start, status').in('client_id', ids).order('week_start', { ascending: false }).limit(1000),
     lastActivity(ids),
+    weighIns(ids, from),
   ])
   const names = new Map((must(users) as any[]).map((u) => [u.id, u.full_name]))
   const progs = must(programs) as any[]
@@ -69,6 +93,7 @@ async function clients(): Promise<CoachClientRow[]> {
       has_targets: withTargets.has(p.user_id),
       last_check_in: ci ? { id: ci.id, week_start: ci.week_start, status: ci.status } : null,
       last_activity: activity.get(p.user_id) ?? null,
+      signals: p.start_date ? flagSignals(weights.filter((w) => w.client_id === p.user_id), t, p.start_date, p.goal_weight_kg) : null,
     }
   })
 }

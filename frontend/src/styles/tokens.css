@@ -55,6 +55,7 @@
   --good: var(--green);
   --scale-on: #123a2b;
   --bar-training: #123a2b;
+  --chart-sleep: #123a2b;   /* sleep bars and lines; not --forest, which is the card colour in dark mode */
   --side-dark: #123a2b;
   --hero-bg: var(--forest);
   --hero-border: transparent;
@@ -106,6 +107,7 @@
   --good: #8cc27a;
   --scale-on: #8cc27a;
   --bar-training: #ddac4f;
+  --chart-sleep: #93b4c4;
   --side-dark: #0e2219;
   --hero-bg: #12291f;
   --hero-border: #234235;
@@ -156,6 +158,7 @@
     --good: #8cc27a;
     --scale-on: #8cc27a;
     --bar-training: #ddac4f;
+    --chart-sleep: #93b4c4;
     --side-dark: #0e2219;
     --hero-bg: #12291f;
     --hero-border: #234235;

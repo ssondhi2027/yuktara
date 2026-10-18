@@ -141,6 +141,11 @@ button { cursor: pointer; }
 .avatar.peach { background: var(--peach); color: var(--peach-ink); }
 .avatar.sand { background: var(--chip); color: var(--ink-2); }
 .avatar.sage { background: var(--sage); color: var(--leaf); }
+.avatar.coach-tone { background: var(--forest); color: var(--gold); }
+/* A profile picture fills the circle (also the avatar-menu button) */
+.avatar.has-photo, .has-photo.avatar { overflow: hidden; padding: 0; background: var(--surface-2); }
+.avatar img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; display: block; }
+.avatar-upload { display: flex; align-items: center; gap: 14px; }
 
 /* ---------- Progress bar ---------- */
 .bar { height: 8px; border-radius: var(--pill); background: var(--chip); overflow: hidden; }
@@ -150,6 +155,7 @@ button { cursor: pointer; }
 /* ---------- Form ---------- */
 .field { display: flex; flex-direction: column; gap: 6px; }
 .field label { font-size: 13px; font-weight: 600; }
+.label-like { font-size: 13px; font-weight: 600; }
 .input, .textarea {
   width: 100%; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--surface);
   padding: 11px 14px; outline: none;

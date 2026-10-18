@@ -3,7 +3,8 @@ import { Link, useParams } from 'react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ChevronLeft, MessageSquare, Search } from 'lucide-react'
 import { api, COACH_REFRESH, type CoachClientRow } from '@/lib/api'
-import { localDay, monthDay, shortDay, weekday } from '@/lib/dates'
+import { localDay, monthDay, shortDay, today, weekday, weekStart } from '@/lib/dates'
+import { rowFlags } from '@/lib/insights'
 import { GOAL_LABEL, WEEKDAY_LABEL } from '@/lib/labels'
 import { bodyWeight, pointsIn, unitLabel } from '@/lib/units'
 import type { ClientStatus, GoalType } from '@/types/db'
@@ -12,11 +13,13 @@ import { useUnits } from '@/app/auth'
 import { Avatar } from '@/components/ui/Avatar'
 import { LineChart } from '@/components/charts/LineChart'
 import { PageError, PageLoading } from '@/components/ui/Loading'
+import { ClientSignals } from '@/features/coach/ClientSignals'
 import { ClientWorkouts } from './ClientWorkouts'
 import { SetupAnswersList } from './SetupAnswers'
 import '@/features/coach/review/review.css'
 import '@/features/coach/dashboard/dashboard.css'
 import './clients.css'
+import { PlanVsEaten } from '@/features/coach/PlanVsEaten'
 
 const STATUS_LABEL: Record<ClientStatus, string> = { active: 'Active', paused: 'Paused', archived: 'Archived' }
 const STATUS_PILL: Record<ClientStatus, string> = { active: 'on-track', paused: 'awaiting', archived: 'overdue' }
@@ -116,6 +119,7 @@ function ClientList({ selected }: { selected?: string }) {
 }
 
 function ClientRow({ c, selected }: { c: CoachClientRow; selected: boolean }) {
+  const flags = c.signals && c.status === 'active' ? rowFlags(c.signals, today()) : []
   return (
     <li>
       <Link to={`/coach/clients/${c.client.id}`} className={`program-row link-row${selected ? ' selected' : ''}`} aria-current={selected ? 'page' : undefined}>
@@ -133,6 +137,11 @@ function ClientRow({ c, selected }: { c: CoachClientRow; selected: boolean }) {
             {' · '}{c.last_check_in ? `Check-in ${monthDay(c.last_check_in.week_start)}: ${CHECKIN_LABEL[c.last_check_in.status].toLowerCase()}` : 'No check-ins yet'}
             {' · '}{c.last_activity ? `active ${shortDay(c.last_activity)}` : 'no logs yet'}
           </div>
+          {flags.length > 0 && (
+            <div className="row-flags" aria-label="Signals (estimates)">
+              {flags.map((f) => <span key={f.text} className={`pill ${f.tone === 'note' ? 'warn' : 'good'}`}>{f.text}</span>)}
+            </div>
+          )}
         </div>
       </Link>
     </li>
@@ -216,6 +225,9 @@ function ClientView({ id }: { id: string }) {
           </div>
         </div>
       </section>
+
+      <ClientSignals clientId={id} />
+      <PlanVsEaten clientId={id} weekStart={weekStart(today())} firstName={c.client.first_name} />
 
       <section className="card">
         <div className="card-head"><h3>Weight</h3>{latest?.kg != null && <span className="small muted">Latest week {bodyWeight(latest.kg, units)}</span>}</div>

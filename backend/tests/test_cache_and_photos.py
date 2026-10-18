@@ -111,6 +111,25 @@ def test_meal_photos_use_their_bucket_and_type():
     assert r.json()["bucket"] == "meal-photos" and r.json()["path"].endswith(".webp")
 
 
+def test_profile_photos_go_to_the_avatars_bucket_in_the_users_folder():
+    def storage(request: httpx.Request) -> httpx.Response:
+        path = request.url.path.split("/object/upload/sign/", 1)[1]
+        return httpx.Response(200, json={"url": f"/object/upload/sign/{path}?token=t"})
+
+    user = uuid.uuid4()
+    client = _photo_app(storage)
+    try:
+        r = client.post(
+            "/photos/upload-url",
+            json={"kind": "avatar", "content_type": "image/jpeg", "size_bytes": 1000},
+            headers=bearer(make_token(user)),
+        )
+    finally:
+        client.__exit__(None, None, None)
+    assert r.status_code == 200
+    assert r.json()["bucket"] == "avatars" and r.json()["path"].startswith(f"{user}/avatar/")
+
+
 def test_photos_over_5_mb_or_not_images_are_refused(client):
     headers = bearer(make_token(uuid.uuid4()))
     too_big = {"kind": "progress", "content_type": "image/jpeg", "size_bytes": 5 * 1024 * 1024 + 1}

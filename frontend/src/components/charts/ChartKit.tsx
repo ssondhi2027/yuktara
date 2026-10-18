@@ -29,12 +29,32 @@ export function visibleLabels(n: number, width: number, per = 52): boolean[] {
   return Array.from({ length: n }, (_, i) => i === n - 1 || (i % step === 0 && n - 1 - i >= step / 2))
 }
 
-/** Pointer handling shared by the charts: index under the pointer, tooltip state. */
-function usePointer(count: number, padX: number) {
+/** Which labels to show when they sit at uneven x positions (viewBox units): skip any too close to the one before; the last always. */
+export function spacedLabels(xs: number[], width: number, per = 52): boolean[] {
+  const gap = (per / Math.max(1, width || 320)) * W
+  const end = xs[xs.length - 1]
+  let lastX = -Infinity
+  return xs.map((v, i) => {
+    if (i === xs.length - 1) return true
+    if (v - lastX < gap || end - v < gap) return false
+    lastX = v
+    return true
+  })
+}
+
+/**
+ * Pointer handling shared by the charts: index under the pointer, tooltip state.
+ * With `xs` (each point's x in the viewBox), the nearest point wins.
+ */
+function usePointer(count: number, padX: number, xs?: number[]) {
   const [active, setActive] = useState<number | null>(null)
   const pick = (e: React.PointerEvent<HTMLDivElement>) => {
     const r = e.currentTarget.getBoundingClientRect()
     const fx = ((e.clientX - r.left) / r.width) * W
+    if (xs?.length) {
+      setActive(xs.reduce((best, v, i) => (Math.abs(v - fx) < Math.abs(xs[best] - fx) ? i : best), 0))
+      return
+    }
     const i = Math.round(((fx - padX) / (W - padX * 2)) * Math.max(1, count - 1))
     setActive(Math.min(count - 1, Math.max(0, i)))
   }
@@ -105,40 +125,74 @@ export function BarChart({ items, height = 160, label, color = 'var(--chart)' }:
   )
 }
 
-export interface Series { name: string; color: string; values: (number | null)[]; dashed?: boolean }
+export interface Series {
+  name: string
+  color: string
+  values: (number | null)[]
+  dashed?: boolean
+  /** dots only, small and faint (e.g. raw per-session estimates under a smoothed line) */
+  faint?: boolean
+  /** a shaded range around the line, per value (e.g. a forecast's 80% band) */
+  band?: ({ lo: number; hi: number } | null)[]
+}
 
 /** Several lines over the same labels (lifts over time, check-in scores, waist and hips). */
-export function MultiLineChart({ labels, series, height = 170, label, format, min: minIn, max: maxIn, connectGaps = false }: {
+export function MultiLineChart({ labels, series, height = 170, label, format, min: minIn, max: maxIn, connectGaps = false, positions }: {
   labels: string[]
   /** draw through missing values (a lift logged on different days) instead of breaking the line */
   connectGaps?: boolean
   series: Series[]
   height?: number
   label: string
-  format: (v: number, s: Series, index: number) => string
+  /** tooltip line for a value; null leaves the series out of the tooltip there */
+  format: (v: number, s: Series, index: number) => string | null
   min?: number
   max?: number
+  /** each label's place on a numeric axis (e.g. days since the first), for uneven spacing; evenly spaced without */
+  positions?: number[]
 }) {
   const [ref, width] = useWidth<HTMLDivElement>()
   const padX = 16
   const padTop = 14
   const padBottom = 24
-  const all = series.flatMap((s) => s.values).filter((v): v is number => v != null)
+  const all = series.flatMap((s) => [...s.values, ...(s.band ?? []).flatMap((b) => (b ? [b.lo, b.hi] : []))]).filter((v): v is number => v != null)
   const lo = minIn ?? Math.min(...all)
   const hi = maxIn ?? Math.max(...all)
   const span = hi - lo || 1
   const min = minIn ?? lo - span * 0.12
   const max = maxIn ?? hi + span * 0.12
-  const x = (i: number) => padX + (i * (W - padX * 2)) / Math.max(1, labels.length - 1)
+  const p0 = positions?.[0] ?? 0
+  const pSpan = positions ? Math.max(1, positions[positions.length - 1] - p0) : 1
+  const x = (i: number) => positions
+    ? padX + ((positions[i] - p0) * (W - padX * 2)) / pSpan
+    : padX + (i * (W - padX * 2)) / Math.max(1, labels.length - 1)
   const y = (v: number) => padTop + ((max - v) / (max - min)) * (height - padTop - padBottom)
-  const { active, handlers } = usePointer(labels.length, padX)
-  const show = visibleLabels(labels.length, width)
+  const xs = positions ? labels.map((_, i) => x(i)) : undefined
+  const { active, handlers } = usePointer(labels.length, padX, xs)
+  const show = xs ? spacedLabels(xs, width) : visibleLabels(labels.length, width)
 
   return (
     <div className="kit-chart" ref={ref} style={{ height }} {...handlers}>
       <svg viewBox={`0 0 ${W} ${height}`} width="100%" height={height} preserveAspectRatio="none" role="img" aria-label={label}>
         {active != null && <line x1={x(active)} x2={x(active)} y1={padTop} y2={height - padBottom} stroke="var(--line-strong)" strokeWidth="1" vectorEffect="non-scaling-stroke" />}
         {series.map((s) => {
+          if (!s.band) return null
+          // Shaded range over each run of values that have one.
+          const runs: number[][] = []
+          s.band.forEach((b, i) => {
+            if (!b) return
+            const run = runs[runs.length - 1]
+            if (run && run[run.length - 1] === i - 1) run.push(i)
+            else runs.push([i])
+          })
+          const band = s.band
+          return runs.filter((r) => r.length > 1).map((r) => (
+            <path key={`${s.name}-band-${r[0]}`} fill={s.color} opacity={0.14}
+              d={`${r.map((i, k) => `${k ? 'L' : 'M'}${x(i)} ${y(band[i]!.hi)}`).join(' ')} ${[...r].reverse().map((i) => `L${x(i)} ${y(band[i]!.lo)}`).join(' ')} Z`} />
+          ))
+        })}
+        {series.map((s) => {
+          if (s.faint) return null
           // Gaps stay gaps: a new segment starts after a missing value.
           let d = ''
           let pen = false
@@ -151,7 +205,8 @@ export function MultiLineChart({ labels, series, height = 170, label, format, mi
         })}
       </svg>
       {series.flatMap((s) => s.values.map((v, i) => v == null ? null : (
-        <span key={`${s.name}-${i}`} className="kit-dot" style={{ left: `${(x(i) / W) * 100}%`, top: y(v), borderColor: s.color, background: active === i ? s.color : undefined }} />
+        <span key={`${s.name}-${i}`} className={s.faint ? 'kit-dot faint' : 'kit-dot'}
+          style={{ left: `${(x(i) / W) * 100}%`, top: y(v), borderColor: s.color, background: s.faint || active === i ? s.color : undefined }} />
       )))}
       <div className="kit-labels" style={{ paddingInline: `${(padX / W) * 100}%` }}>
         {labels.map((l, i) => <span key={l + i}>{show[i] ? l : ''}</span>)}
@@ -159,7 +214,11 @@ export function MultiLineChart({ labels, series, height = 170, label, format, mi
       {active != null && (
         <Tip x={x(active)}>
           <b>{labels[active]}</b>
-          {series.map((s) => s.values[active] != null && <span key={s.name}><i style={{ background: s.color }} /> {format(s.values[active]!, s, active)}</span>)}
+          {series.map((s) => {
+            const v = s.values[active]
+            const text = v == null ? null : format(v, s, active)
+            return text && <span key={s.name}><i style={{ background: s.color }} /> {text}</span>
+          })}
         </Tip>
       )}
     </div>

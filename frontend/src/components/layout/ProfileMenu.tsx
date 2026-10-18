@@ -5,6 +5,7 @@ import { useTheme, type ThemePref } from '@/app/hooks'
 import { useAuth } from '@/app/auth'
 import { setUnits } from '@/lib/auth'
 import type { UnitSystem } from '@/types/db'
+import { useAvatarUrl } from '@/components/ui/Avatar'
 
 /** Avatar button for the signed-in person: who they are, theme, log out. */
 export function ProfileMenu({
@@ -21,6 +22,7 @@ export function ProfileMenu({
   const ref = useRef<HTMLDivElement>(null)
   const [unitsError, setUnitsError] = useState<string | null>(null)
   const [savingUnits, setSavingUnits] = useState(false)
+  const photo = useAvatarUrl(user?.id)
 
   useEffect(() => {
     if (!open) return
@@ -45,9 +47,9 @@ export function ProfileMenu({
 
   return (
     <div className="menu-wrap" ref={ref}>
-      <button type="button" className={className} aria-haspopup="menu" aria-expanded={open}
+      <button type="button" className={`${className}${photo ? ' has-photo' : ''}`} aria-haspopup="menu" aria-expanded={open}
         aria-label={`Account: ${user.full_name || user.email}`} onClick={() => setOpen((o) => !o)}>
-        {user.initials}
+        {photo ? <img src={photo} alt="" /> : user.initials}
       </button>
       {open && (
         <div className={`menu menu-${align} menu-${direction}`} role="menu">

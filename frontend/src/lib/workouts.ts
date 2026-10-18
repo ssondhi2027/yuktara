@@ -4,11 +4,14 @@
 
 import type { MuscleGroup, UnitSystem } from '@/types/db'
 import type { LoggedSet, PlannedExercise, PlannedWorkout, WorkoutSummary } from './api'
-import { addDays, weekStart } from './dates'
-import { inputFromKg, int, kgFromInput, loadWeight, toUnit, unitLabel } from './units'
+import { addDays, weekStart } from './dates.ts'
+import { inputFromKg, int, kgFromInput, loadWeight, toUnit, unitLabel } from './units.ts'
 
 export interface PlanTemplate { id: string; name: string; day_of_week: number | null; notes: string | null; exercises: PlannedExercise[] }
-export interface PlanSession { id: string; workout_template_id: string | null; performed_on: string; finished: boolean }
+export interface PlanSession { id: string; workout_template_id: string | null; performed_on: string; finished: boolean; skipped?: boolean; notes?: string | null }
+
+/** Reasons offered when skipping a workout (free text is fine too). */
+export const SKIP_REASONS = ['Sick', 'Injury or pain', 'Travel', 'Busy', 'Needed rest'] as const
 
 /**
  * Workouts done for "X of Y planned": with a program, the distinct planned
@@ -30,7 +33,8 @@ export const dateInWeek = (monday: string, dow: number) => addDays(monday, (dow 
  * This week's planned workouts, Monday first. A workout is done once a
  * finished session of it exists this week (whatever day it was done on), so a
  * missed Tuesday can be caught up on Wednesday. Days before `startDate` aren't
- * "missed"; those workouts stay available.
+ * "missed"; those workouts stay available. A skip (marked by the client) shows
+ * as skipped unless the workout was done after all.
  */
 export function weekPlan(templates: PlanTemplate[], sessions: PlanSession[], todayIso: string, startDate: string): PlannedWorkout[] {
   const monday = weekStart(todayIso)
@@ -39,15 +43,22 @@ export function weekPlan(templates: PlanTemplate[], sessions: PlanSession[], tod
     .map((t): PlannedWorkout => {
       const date = t.day_of_week == null ? null : dateInWeek(monday, t.day_of_week)
       const open = sessions.find((s) => s.workout_template_id === t.id && !s.finished)
-      const done = sessions.find((s) => s.workout_template_id === t.id && s.finished && s.performed_on >= monday && s.performed_on <= sunday)
+      const thisWeek = (s: PlanSession) => s.workout_template_id === t.id && s.finished && s.performed_on >= monday && s.performed_on <= sunday
+      const done = sessions.find((s) => thisWeek(s) && !s.skipped)
+      const skip = sessions.find((s) => thisWeek(s) && s.skipped)
       let status: PlannedWorkout['status']
       if (open) status = 'in_progress'
       else if (done) status = 'done'
+      else if (skip) status = 'skipped'
       else if (date == null) status = 'anytime'
       else if (date === todayIso) status = 'today'
       else if (date > todayIso) status = 'upcoming'
       else status = date >= startDate ? 'missed' : 'anytime'
-      return { template_id: t.id, name: t.name, date, notes: t.notes, exercises: t.exercises, status, session_id: open?.id ?? done?.id ?? null }
+      return {
+        template_id: t.id, name: t.name, date, notes: t.notes, exercises: t.exercises, status,
+        session_id: open?.id ?? done?.id ?? skip?.id ?? null,
+        skip_reason: !open && !done && skip ? skip.notes || null : null,
+      }
     })
     .sort((a, b) => (a.date ?? '9999').localeCompare(b.date ?? '9999'))
 }
@@ -55,7 +66,7 @@ export function weekPlan(templates: PlanTemplate[], sessions: PlanSession[], tod
 export interface SummarySet extends LoggedSet { exercise_id: string; name: string; primary: MuscleGroup[] }
 
 export function summarize(
-  s: { id: string; name: string; performed_on: string; finished: boolean; duration_min: number | null; notes: string | null },
+  s: { id: string; name: string; performed_on: string; finished: boolean; duration_min: number | null; notes: string | null; effort?: number | null; skipped?: boolean },
   sets: SummarySet[],
 ): WorkoutSummary {
   const byExercise = new Map<string, { name: string; sets: LoggedSet[] }>()
@@ -71,6 +82,8 @@ export function summarize(
   for (const e of byExercise.values()) e.sets.sort((a, b) => a.set_number - b.set_number)
   return {
     ...s,
+    effort: s.effort ?? null,
+    skipped: s.skipped ?? false,
     sets: sets.length,
     volume_kg: Math.round(volume * 10) / 10, // rounded for display, after any lb conversion
     muscles: [...muscles],

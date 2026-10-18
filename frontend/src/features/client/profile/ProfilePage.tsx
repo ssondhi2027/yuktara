@@ -6,12 +6,13 @@ import { api, type MyProfile } from '@/lib/api'
 import { setUnits } from '@/lib/auth'
 import { monthDay } from '@/lib/dates'
 import { DIET_LABEL, EXPERIENCE_LABEL, GOAL_LABEL, LOCATION_LABEL, MEALS_LABEL, WEEKDAY_LABEL } from '@/lib/labels'
-import { heightProblem, nameProblem, textProblem, weightProblem } from '@/lib/profile'
+import { heightProblem, nameProblem, phoneProblem, textProblem, weightProblem } from '@/lib/profile'
 import { CM_PER_IN, inputFromKg, kgFromInput, litres, unitLabel } from '@/lib/units'
 import type { DietType, TrainLocation, UnitSystem } from '@/types/db'
 import { useAuth } from '@/app/auth'
 import { PageError, PageLoading } from '@/components/ui/Loading'
 import './profile.css'
+import { AvatarUpload } from '@/components/ui/AvatarUpload'
 
 /** /settings: the client's own answers (editable), what the coach controls (read-only), units and log out. */
 export function ProfilePage() {
@@ -24,13 +25,13 @@ export function ProfilePage() {
 
 interface Form {
   full_name: string; height: string; goal_weight: string; diet: DietType | ''; foods_to_avoid: string
-  meals_per_day: string; training_days: string; train_location: TrainLocation | ''; injuries: string
+  meals_per_day: string; training_days: string; train_location: TrainLocation | ''; injuries: string; phone: string
 }
 
 function Profile({ p }: { p: MyProfile }) {
   const qc = useQueryClient()
   const navigate = useNavigate()
-  const { refresh, signOut } = useAuth()
+  const { user, refresh, signOut } = useAuth()
   const u = p.units
   const [f, setF] = useState<Form>({
     full_name: p.full_name,
@@ -38,6 +39,7 @@ function Profile({ p }: { p: MyProfile }) {
     goal_weight: p.goal_weight_kg == null ? '' : inputFromKg(p.goal_weight_kg, u),
     diet: p.diet ?? '', foods_to_avoid: p.foods_to_avoid ?? '', meals_per_day: p.meals_per_day ? String(p.meals_per_day) : '',
     training_days: p.training_days ? String(p.training_days) : '', train_location: p.train_location ?? '', injuries: p.injuries ?? '',
+    phone: p.phone ?? '',
   })
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [saved, setSaved] = useState(false)
@@ -54,6 +56,7 @@ function Profile({ p }: { p: MyProfile }) {
       training_days: f.training_days ? Number(f.training_days) : null,
       train_location: f.train_location || null,
       injuries: f.injuries,
+      phone: f.phone,
     }),
     onSuccess: async () => {
       setSaved(true)
@@ -74,6 +77,7 @@ function Profile({ p }: { p: MyProfile }) {
     add('goal_weight', weightProblem(f.goal_weight, u))
     add('foods_to_avoid', textProblem(f.foods_to_avoid))
     add('injuries', textProblem(f.injuries))
+    add('phone', phoneProblem(f.phone))
     setErrors(found)
     if (!Object.keys(found).length) save.mutate()
   }
@@ -105,9 +109,11 @@ function Profile({ p }: { p: MyProfile }) {
       <div className="profile-cols">
         <form className="card stack" style={{ gap: 14 }} noValidate onSubmit={submit}>
           <h2>About you</h2>
+          {user && <AvatarUpload person={user} />}
           <p className="small muted">Your coach uses these answers to build your plan.</p>
           <div className="grid grid-2" style={{ gap: 12 }}>
             {field('full_name', 'Name', text('full_name', { maxLength: 80, autoComplete: 'name' }))}
+            {field('phone', 'Phone (optional)', text('phone', { type: 'tel', maxLength: 32, autoComplete: 'tel' }), 'Only your coach sees it.')}
             {field('height', `Height (${u === 'imperial' ? 'in' : 'cm'})`, text('height', { type: 'number', inputMode: 'decimal', step: '0.1' }))}
             {field('goal_weight', `Goal weight (${unitLabel(u)})`, text('goal_weight', { type: 'number', inputMode: 'decimal', step: '0.1' }))}
             {field('training_days', 'Training days a week', (

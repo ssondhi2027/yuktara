@@ -8,6 +8,7 @@ import { ApiError } from '../backend'
 import { addDays, monthDay, parseDate, toISODate, weekStart } from '../dates'
 import { supabase } from '../supabase'
 import { OWN_WORKOUT, summarize, type SummarySet } from '../workouts'
+import { mealsFor } from '../meals'
 
 export const db = () => {
   if (!supabase) throw new Error('Supabase is not configured')
@@ -77,15 +78,8 @@ export function nextCheckInDate(start: string, checkInDay: number, from: string)
 
 export const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
 
-/** The meals a client planned to eat a day, from their setup answer. */
-export function plannedMeals(perDay: number | null): MealType[] {
-  switch (perDay) {
-    case 2: return ['breakfast', 'dinner']
-    case 4:
-    case 5: return ['breakfast', 'snack', 'lunch', 'dinner']
-    default: return ['breakfast', 'lunch', 'dinner']
-  }
-}
+/** The meals a client planned to eat a day, from their setup answer (lib/meals.ts). */
+export const plannedMeals = (perDay: number | null): MealType[] => mealsFor(perDay)
 
 // ---------- Targets ----------
 
@@ -118,7 +112,8 @@ export async function signedUrls(paths: string[]): Promise<Record<string, string
   const out: Record<string, string> = {}
   const byBucket: Record<string, string[]> = {}
   for (const p of paths) {
-    const bucket = p.split('/')[1] === 'meals' ? 'meal-photos' : 'progress-photos'
+    const kind = p.split('/')[1]
+    const bucket = kind === 'meals' ? 'meal-photos' : kind === 'avatar' ? 'avatars' : 'progress-photos'
     ;(byBucket[bucket] ??= []).push(p)
   }
   await Promise.all(Object.entries(byBucket).map(async ([bucket, list]) => {
@@ -152,7 +147,7 @@ export const round1 = (x: number) => Math.round(x * 10) / 10
 
 /** Columns for a session plus its sets, enough for summarize(). */
 export const SESSION_SUMMARY_COLS =
-  'id, performed_on, finished_at, duration_min, notes, workout_templates(name), set_logs(set_number, reps, weight_kg, rpe, is_warmup, exercise_id, exercises(name, exercise_muscles(muscle, role)))'
+  'id, performed_on, finished_at, duration_min, notes, effort, status, workout_templates(name), set_logs(set_number, reps, weight_kg, rpe, is_warmup, exercise_id, exercises(name, exercise_muscles(muscle, role)))'
 
 const numOrNull = (x: unknown) => (x == null ? null : Number(x))
 
@@ -176,6 +171,8 @@ export function sessionSummary(row: any): WorkoutSummary {
     finished: row.finished_at != null,
     duration_min: row.duration_min,
     notes: row.notes,
+    effort: row.effort ?? null,
+    skipped: row.status === 'skipped',
   }, sets)
 }
 

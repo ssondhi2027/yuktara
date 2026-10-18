@@ -49,6 +49,7 @@
 .kit-chart .kit-labels { justify-content: space-between; }
 .kit-labels span { width: 0; display: flex; justify-content: center; white-space: nowrap; }
 .kit-dot { position: absolute; width: 9px; height: 9px; margin: -4.5px 0 0 -4.5px; border-radius: 50%; border: 2px solid; background: var(--surface); pointer-events: none; }
+.kit-dot.faint { width: 6px; height: 6px; margin: -3px 0 0 -3px; border: 0; opacity: .32; }
 .chart-tip {
   position: absolute; top: -6px; z-index: 3; display: flex; flex-direction: column; gap: 2px; padding: 7px 10px; border-radius: 10px;
   background: var(--forest); color: var(--on-forest); font-size: 12px; white-space: nowrap; pointer-events: none; box-shadow: 0 6px 18px rgb(0 0 0 / .16);

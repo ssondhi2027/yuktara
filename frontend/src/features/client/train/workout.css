@@ -50,7 +50,11 @@
 .summary-tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .summary-tiles .tile { display: flex; flex-direction: column; gap: 2px; }
 .summary-tiles b { font-size: 22px; }
-@media (min-width: 640px) { .summary-tiles { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.summary-tiles .tile:last-child:nth-child(odd) { grid-column: span 2; }
+@media (min-width: 640px) {
+  .summary-tiles { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  .summary-tiles .tile:last-child:nth-child(odd) { grid-column: auto; }
+}
 .summary-list { margin-top: 12px; }
 
 @media (max-width: 380px) {
@@ -59,3 +63,22 @@
 }
 .ex-coach-note { margin-top: 6px; color: var(--ink); }
 .ex-coach-note b { color: var(--mint-ink); }
+
+/* "How hard was this workout?" 1–10, above Finish */
+.effort-field { border: 0; margin: 0 0 14px; padding: 0; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.effort-field legend { padding: 0; margin-bottom: 8px; font-weight: 600; }
+.effort-scale { display: grid; grid-template-columns: repeat(10, minmax(0, 1fr)); gap: 4px; }
+.effort-scale button {
+  min-height: 40px; border-radius: var(--radius-sm); border: 1.5px solid var(--line-strong); background: var(--surface);
+  color: var(--ink); font: 600 15px var(--font-body); cursor: pointer; padding: 0;
+}
+.effort-scale button.on { background: var(--primary); border-color: var(--primary); color: var(--on-primary); }
+
+/* Warm-up sets: the set label is a toggle (number ↔ W); warm-up rows are lighter */
+button.set-n { border: 0; background: transparent; padding: 0; min-height: 36px; border-radius: var(--radius-sm); font: inherit; font-weight: 700; color: var(--ink-2); cursor: pointer; }
+button.set-n:hover { background: var(--surface-2); }
+.set-row.warmup button.set-n { color: var(--peach-ink); }
+.set-row.warmup:not(.done) .set-input { border-style: dashed; }
+.set-row.warmup.done { background: var(--surface-2); }
+.warmup-line { margin-top: 2px; }
+.picker-item .custom-tag { margin-left: 6px; font-size: 10px; padding: 1px 6px; vertical-align: middle; }

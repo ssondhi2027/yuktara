@@ -30,22 +30,25 @@
 .meal-thumb.sand { background: var(--chip); color: var(--ink-2); }
 .meal-title { font-family: var(--font-head); font-weight: 600; font-size: 19px; }
 
-.missing-meal {
-  display: flex; flex-direction: column; gap: 12px; padding: 16px; border-radius: 20px;
-  border: 1.5px dashed var(--line-strong);
-}
-.missing-meal .btn { padding: 0 10px; }
-
 .meal-preview { width: 100%; max-height: 220px; object-fit: cover; border-radius: 16px; }
-.search-results { list-style: none; margin: 4px 0 0; padding: 0; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
-.search-results li + li { border-top: 1px solid var(--line); }
-.search-results button {
-  width: 100%; display: flex; justify-content: space-between; gap: 8px; padding: 10px 12px;
-  background: var(--surface); border: 0; text-align: left;
-}
-.search-results button:hover { background: var(--surface-2); }
 
 /* Coach's new or upcoming targets */
 .target-news { display: flex; flex-direction: column; gap: 4px; padding: 10px 14px; border-radius: 14px; background: var(--mint); color: var(--ink); }
 .target-news p { margin: 0; }
 .target-news b { color: var(--mint-ink); }
+
+/* Meal sheet: custom food and quick add (food lines and totals: components/food/food.css) */
+.meal-sheet { min-width: 0; }
+
+/* Meals of the day: plan, then what was logged */
+.plan-note { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 0; }
+.meal-slot { display: flex; flex-direction: column; gap: 10px; padding: 14px; border-radius: 20px; border: 1.5px dashed var(--line-strong); min-width: 0; }
+.meal-slot.logged { border-style: solid; border-color: var(--line); }
+.planned-meal { background: var(--surface-2); border-radius: 14px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+.planned-meal ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.planned-meal li { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.planned-meal p { margin: 0; }
+.slot-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: 8px; }
+.slot-actions .btn { padding: 0 10px; }
+.meal-items summary { cursor: pointer; color: var(--ink-2); margin-top: 2px; }
+.meal-items ul { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }

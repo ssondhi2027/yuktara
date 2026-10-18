@@ -8,6 +8,7 @@ import type { UnitSystem } from '@/types/db'
 export function setupRows(c: ClientDetail, units: UnitSystem, { withCheckInDay = true } = {}): [string, string][] {
   const rows: [string, string | null][] = [
     ['Email', c.email],
+    ['Phone', c.phone],
     ['Started', `${monthDay(c.start_date)} · week ${c.week}`],
     ['Goal', c.goal ? GOAL_LABEL[c.goal] : null],
     ['Weight', c.start_weight_kg != null ? `${bodyWeight(c.start_weight_kg, units)}${c.goal_weight_kg != null ? ` → goal ${bodyWeight(c.goal_weight_kg, units)}` : ''}` : null],
@@ -26,7 +27,13 @@ export function setupRows(c: ClientDetail, units: UnitSystem, { withCheckInDay =
 export function SetupAnswersList({ c, units, withCheckInDay }: { c: ClientDetail; units: UnitSystem; withCheckInDay?: boolean }) {
   return (
     <dl className="answers-list">
-      {setupRows(c, units, { withCheckInDay }).map(([k, v]) => <div key={k}><dt>{k}</dt><dd>{v}</dd></div>)}
+      {setupRows(c, units, { withCheckInDay }).map(([k, v]) => (
+        <div key={k}>
+          <dt>{k}</dt>
+          {/* tel: keeps only what a dialler understands */}
+          <dd>{k === 'Phone' ? <a className="link" href={`tel:${v.replace(/[^\d+]/g, '')}`}>{v}</a> : v}</dd>
+        </div>
+      ))}
     </dl>
   )
 }

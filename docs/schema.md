@@ -60,6 +60,45 @@ The app's route guard (`RequireAuth` in `frontend/src/app/auth.tsx`) is only a c
    `<CODE>` is the invite code clients will type, 4–20 letters, digits or dashes (for example `NAME-7Q4K`). The coach can replace it later from the app (`POST /coach/invite-code`).
 3. Log out and log in again: the coach app opens.
 
+## Meal plans (0023_meal_plans.sql)
+
+- **What.** A coach plans each meal (breakfast, lunch, dinner, snacks, following the client's meals a day) as foods from the food list with amounts, plus a note per meal ("or swap rice for quinoa"). One plan for every day, or (`split`) separate training-day and rest-day plans; a day counts as a training day when the client's program has a workout on that weekday.
+- **Tables.** `meal_plans` (coach, client, name, `effective_from`, `split`, per-meal `notes` keyed `"<day>:<meal>"`) and `meal_plan_items` (day, meal, position, food, amount, unit `g`/`ml`/`serving`, serving name). A food in a plan can't be deleted.
+- **Versions.** Client plans apply from `effective_from` until the next version, like targets; a plan starts today or later, and saving on a date that already has a version replaces it. `client_id` null is one of the coach's templates (no date).
+- **Who.** The coach writes their own clients' plans and their templates (and reads them while the client is theirs); the client reads their own plan and can't change it. `save_meal_plan(p jsonb)` (security invoker) saves a version or template with its items in one step.
+- **Where it shows.** The client's Food page shows each meal's plan, "Log as planned" and "Log something else", and pre-sets "On plan?" by comparing the logged foods with the plan. The coach edits plans on the Nutrition plans page and sees planned vs eaten per meal in the client view and the check-in review.
+
+## Food list (0022_foods.sql)
+
+- **What.** `foods`: calories, protein, carbs and fat per 100 g (or per 100 ml for drinks) and up to 8 named servings (`[{"name": "1 large egg", "amount": 50}]`, checked by `valid_servings`). `created_by` null is the shared list, seeded in the migration from `frontend/src/lib/foodList.ts` (a test keeps them in step); a coach's own foods are visible to the coach and their clients.
+- **Logging.** A food line is a food plus an amount in g, ml or a serving; calories and macros come from the amount (`frontend/src/lib/meals.ts`). `meal_items` gains `food_id` and `serving`, and still stores the calculated numbers, so history doesn't change if a food is edited later. A food typed in for one meal (not in the list) has no `food_id`. The meal-items write policy now also requires the food, if any, to be one the client can see.
+- **Limits.** Names 2–120 characters, unique per coach and in the shared list; per 100: 0–900 kcal, 0–100 g of each macro.
+
+## Foods inside a meal (0021_meal_items.sql)
+
+- **What.** `meal_items` rows under a `meal_logs` row: food name, amount and unit (`g`, `ml`, `oz`, `cup`, `tbsp`, `tsp`, `piece`, `serving`), calories and macros. The meal keeps its totals, which the app adds up from the items (`frontend/src/lib/meals.ts`). Optional: a meal can still be logged with totals only.
+- **Who.** The client writes the foods in their own meals; the client and their coach read them. The old `for all` policy (which also let the coach write) is replaced.
+- **Limits.** Name 1–120 characters, amount above 0 and up to 10,000, calories 0–5,000, each macro 0–1,000 g.
+
+## Profile pictures (0020_avatars.sql)
+
+- **Where.** `users.avatar_url` holds a path in the private `avatars` bucket, `<user id>/avatar/<date>-<random>.jpg`; a check keeps it inside the person's own folder. Uploads go through `POST /photos/upload-url` with `kind: "avatar"` (the API builds the path from the verified user id); the photo is compressed on the device first.
+- **Who sees it.** The person, their coach, and the coach's clients: the same people who can read each other's `users` row. The app reads every visible avatar in one query and signs the URLs in one batch (signed for an hour).
+- **Changing it.** A new photo replaces the path and the old file is deleted; Remove clears both.
+
+## Skipped workouts (0019_skipped_workouts.sql)
+
+- **What.** A client marks a planned workout skipped (Train tab), with an optional reason: a `workout_sessions` row with `status = 'skipped'`, `finished_at` set, no start time, no duration and no sets. Undo deletes it; starting that workout later in the week removes the skip.
+- **Rules.** One skip per workout per day; no sets can be logged in a skipped session, and a session with sets can't become a skip (`guard_skipped_session` trigger). RLS is unchanged (0013): clients add and delete their own sessions.
+- **Counting.** A skip never counts as done: `weekly_summaries` counts `status = 'done'`, Progress leaves skips out, and the week plan shows "Skipped" (with the reason) instead of "Missed". The coach sees skips and reasons in the client's Workouts list.
+
+## The coach's own exercises (0018_custom_exercises.sql)
+
+- **What.** Coaches add exercises missing from the shared library (Programs → Exercises, or "Create an exercise" from the builder's exercise picker). `exercises.created_by` is the coach; null means the shared library.
+- **Who sees them.** The coach and their clients (RLS from 0007): in the builder, the client's workout logger and swaps, and the body map. The program generator still picks from the shared library only.
+- **Saving.** `save_exercise(e jsonb)` (security invoker) saves the exercise with its main and secondary muscles in one step. Names are 2–80 characters, unique per coach (any case) and can't repeat a library name; cues are up to 300 characters.
+- **Deleting.** Only exercises no program or logged set uses; otherwise rename it. If a coach's account is deleted, their exercises go with it (the foreign key was `on delete set null`, which would have turned them into shared library rows).
+
 ## Coach pages and the client's Profile (0017_coach_settings.sql)
 
 - **Who edits a client profile.** Both roles share the column grants (0007, 0010), so the `guard_client_profile` trigger decides by who is updating:

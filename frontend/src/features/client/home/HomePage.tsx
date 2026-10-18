@@ -15,6 +15,7 @@ import { ProfileMenu } from '@/components/layout/ProfileMenu'
 import { useUnreadMessages } from '@/features/messages/useUnreadMessages'
 import { HabitSheet } from './HabitSheet'
 import './home.css'
+import { Avatar } from '@/components/ui/Avatar'
 
 export function ClientHomePage() {
   const { data, error, isPending } = useQuery({ queryKey: ['client-home'], queryFn: api.clientHome })
@@ -372,7 +373,7 @@ function CoachNoteCard({ h, desktop }: { h: ClientHome; desktop: boolean }) {
         {h.coach ? (
           <>
             <div className="row">
-              <span className="avatar gold">{h.coach.initials}</span>
+              <Avatar person={h.coach} tone="gold" />
               <b>{h.coach.first_name}, your coach</b>
             </div>
             <p className="small muted">Feedback on your check-ins will show up here.</p>
@@ -390,7 +391,7 @@ function CoachNoteCard({ h, desktop }: { h: ClientHome; desktop: boolean }) {
   return (
     <section className="card dark coach-note">
       <div className="row">
-        <span className="avatar gold">{n.coach.initials}</span>
+        <Avatar person={n.coach} tone="gold" />
         <div>
           <b>{n.coach.first_name}, your coach</b>
           <div className="small muted">{n.title} · {n.date}</div>

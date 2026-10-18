@@ -11,6 +11,7 @@ import { PageError, PageLoading } from '@/components/ui/Loading'
 import { InviteCode } from '@/features/coach/dashboard/DashboardPage'
 import '@/features/coach/dashboard/dashboard.css'
 import './settings.css'
+import { AvatarUpload } from '@/components/ui/AvatarUpload'
 
 const DAY_ORDER = [1, 2, 3, 4, 5, 6, 0]
 const ANSWER_LABEL: Record<AnswerType, string> = { scale: 'Scale 1–5', number: 'Number', text: 'Text', yes_no: 'Yes / no' }
@@ -59,6 +60,7 @@ function ProfileCard({ name, defaultDay }: { name: string; defaultDay: number })
       if (!p) save.mutate()
     }}>
       <h2>Profile and defaults</h2>
+      {user && <AvatarUpload person={user} />}
       <div className="settings-grid">
         <div className="field">
           <label htmlFor="coach-name">Your name</label>

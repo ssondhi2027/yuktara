@@ -6,7 +6,9 @@ import { useUnits } from '@/app/auth'
 import { Avatar } from '@/components/ui/Avatar'
 import { PageError } from '@/components/ui/Loading'
 import { GOAL_LABEL } from '@/lib/labels'
+import { ClientSignals } from '@/features/coach/ClientSignals'
 import { FeedbackBox } from './Feedback'
+import { PlanVsEaten } from '@/features/coach/PlanVsEaten'
 
 /** Tablet right pane and phone detail: numbers, answers, feedback. */
 export function ReviewCompact({ id }: { id: string }) {
@@ -28,6 +30,9 @@ export function ReviewCompact({ id }: { id: string }) {
       </header>
 
       <StatTiles r={r} />
+
+      <ClientSignals clientId={r.client.id} className="compact-signals" />
+      <PlanVsEaten clientId={r.client.id} weekStart={r.week_start} firstName={r.client.first_name} />
 
       <div className="compact-cols">
         <section className="card stack">

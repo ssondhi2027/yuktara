@@ -5,6 +5,10 @@
 // tests/progress.test.ts. Weights are kg here; screens convert for display.
 
 import type { MuscleGroup } from '../types/db'
+import {
+  forecastLift, liftPlateau, oneRepMax, smoothLift, weightSignals, windowStart,
+  type LiftForecast, type LiftPoint, type Plateau, type WeightForecast,
+} from './forecast.ts'
 
 export type Period = 'p4' | 'p12' | 'all'
 export const PERIOD_WEEKS: Record<Exclude<Period, 'all'>, number> = { p4: 4, p12: 12 }
@@ -15,7 +19,7 @@ export interface ProgressRaw {
   today: string
   start_date: string
   goal_weight_kg: number | null
-  /** daily logs from the first day needed (period + the one before it) */
+  /** daily logs from rawFrom(): the period, the one before it and the forecasts' 12 weeks */
   days: { date: string; weight_kg: number | null; steps: number | null; water_ml: number | null; sleep_h: number | null }[]
   meals: { date: string; calories: number; protein_g: number; on_plan: 'yes' | 'partly' | 'no' | null }[]
   /** target versions, any order */
@@ -26,7 +30,7 @@ export interface ProgressRaw {
   sessions: {
     date: string
     template_id: string | null
-    sets: { exercise_id: string; name: string; kg: number | null; reps: number | null; primary: MuscleGroup[] }[]
+    sets: { exercise_id: string; name: string; kg: number | null; reps: number | null; rpe?: number | null; primary: MuscleGroup[] }[]
   }[]
   check_ins: { week_start: string; waist_cm: number | null; hips_cm: number | null; energy: number | null; sleep: number | null; stress: number | null; hunger: number | null }[]
 }
@@ -52,14 +56,21 @@ export interface ProgressDetail {
     weekly: { week: string; kg: number | null }[]
     daily: { date: string; kg: number }[]
     goal_kg: number | null
-    /** where the weekly trend points four weeks after the last week, or null with too little data */
+    /** the forecast's value four weeks ahead (kept for simple callers), or null with too little data */
     projection: { week: string; kg: number } | null
+    /** robust trend, 80% band and goal date from the last 12 weeks, whatever the period (lib/forecast.ts) */
+    forecast: WeightForecast
+    plateau: Plateau | null
   }
   training: {
     weekly: { week: string; done: number; planned: number; volume_kg: number; sets: number }[]
     muscles: { muscle: MuscleGroup; sets: number }[]
   }
-  strength: { exercise_id: string; name: string; sessions: number; points: { date: string; e1rm: number; kg: number; reps: number }[] }[]
+  /**
+   * The three most-logged lifts in the period: per-session best estimate (raw) and
+   * smoothed line for the period; forecast and plateau from the last 12 weeks.
+   */
+  strength: { exercise_id: string; name: string; sessions: number; points: LiftPoint[]; forecast: LiftForecast; plateau: Plateau | null }[]
   nutrition: {
     daily: { date: string; calories: number | null; protein_g: number | null; calories_target: number | null; protein_target: number | null }[]
     weekly_on_plan: { week: string; pct: number | null; meals: number }[]
@@ -101,12 +112,6 @@ export const average = (xs: (number | null | undefined)[]): number | null => {
 const round = (x: number | null, step = 1) => (x == null ? null : Number((Math.round(x / step) * step).toFixed(2)))
 export const pctOf = (part: number | null, whole: number | null) => (part == null || !whole ? null : Math.round((part / whole) * 100))
 
-/** Estimated one-rep max (Epley): weight × (1 + reps / 30). A single is the weight itself. */
-export function epley(kg: number, reps: number): number {
-  if (reps <= 0 || kg <= 0) return 0
-  return reps === 1 ? kg : kg * (1 + reps / 30)
-}
-
 /** Training volume: Σ sets × reps × weight (kg). Bodyweight sets add nothing. */
 export const volumeKg = (sets: { kg: number | null; reps: number | null }[]) =>
   sets.reduce((a, s) => a + (s.kg ?? 0) * (s.reps ?? 0), 0)
@@ -145,16 +150,6 @@ export function planStreak(weekly: { week: string; done: number; planned: number
   return streak
 }
 
-/** Least-squares slope of y over x (per step), or null with fewer than 3 points. */
-export function slope(points: { x: number; y: number }[]): number | null {
-  if (points.length < 3) return null
-  const mx = average(points.map((p) => p.x))!
-  const my = average(points.map((p) => p.y))!
-  const num = points.reduce((a, p) => a + (p.x - mx) * (p.y - my), 0)
-  const den = points.reduce((a, p) => a + (p.x - mx) ** 2, 0)
-  return den ? num / den : null
-}
-
 // ---------- The page ----------
 
 export function progressFrom(raw: ProgressRaw, period: Period): ProgressDetail {
@@ -178,8 +173,8 @@ export function progressFrom(raw: ProgressRaw, period: Period): ProgressDetail {
   const current = withKg.length ? withKg[withKg.length - 1].kg : null
   const change = withKg.length >= 2 ? round(withKg[withKg.length - 1].kg! - withKg[0].kg!, 0.1) : null
   const prevAvg = round(average(raw.days.filter((d) => d.weight_kg != null && inWeeks(d.date, previous)).map((d) => d.weight_kg)), 0.1)
-  const s = slope(withKg.map((w) => ({ x: weeks.indexOf(w.week), y: w.kg! })))
-  const projection = s != null && current != null ? { week: plusDays(weeks[weeks.length - 1], 28), kg: round(current + s * 4, 0.1)! } : null
+  const { forecast, plateau } = weightSignals(raw.days.map((d) => ({ date: d.date, kg: d.weight_kg })), raw.today, raw.start_date, raw.goal_weight_kg)
+  const projection = forecast.enough && forecast.points.length >= 4 ? { week: forecast.points[3].week, kg: forecast.points[3].kg } : null
 
   // Training
   const trainingWeek = (w: string) => {
@@ -198,20 +193,30 @@ export function progressFrom(raw: ProgressRaw, period: Period): ProgressDetail {
     for (const st of x.sets) for (const m of st.primary) muscleSets.set(m, (muscleSets.get(m) ?? 0) + 1)
   }
 
-  // Strength: the three exercises with the most sessions, best estimated 1RM per session.
-  const bySession = new Map<string, { name: string; dates: Map<string, { e1rm: number; kg: number; reps: number }> }>()
-  for (const x of raw.sessions.filter((x) => inWeeks(x.date, weeks))) {
+  // Strength: the three exercises with the most sessions in the period. Per
+  // session the best set's estimated 1RM (RPE-aware, lib/forecast.ts), smoothed
+  // across sessions from the earlier of the period and the forecast window.
+  const win = windowStart(raw.today, raw.start_date)
+  const liftFrom = weeks[0] < win ? weeks[0] : win
+  const bySession = new Map<string, { name: string; dates: Map<string, Omit<LiftPoint, 'smooth' | 'date'>> }>()
+  for (const x of raw.sessions.filter((x) => x.date >= liftFrom && x.date <= raw.today)) {
     for (const st of x.sets) {
-      if (st.kg == null || !st.reps) continue
+      const est = oneRepMax(st.kg, st.reps, st.rpe)
+      if (est == null) continue
       const e = bySession.get(st.exercise_id) ?? { name: st.name, dates: new Map() }
       const best = e.dates.get(x.date)
-      const est = epley(st.kg, st.reps)
-      if (!best || est > best.e1rm) e.dates.set(x.date, { e1rm: Math.round(est * 10) / 10, kg: st.kg, reps: st.reps })
+      if (!best || est > best.raw) e.dates.set(x.date, { raw: est, kg: st.kg!, reps: st.reps!, rpe: st.rpe ?? null })
       bySession.set(st.exercise_id, e)
     }
   }
   const strength = [...bySession.entries()]
-    .map(([id, e]) => ({ exercise_id: id, name: e.name, sessions: e.dates.size, points: [...e.dates.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([date, v]) => ({ date, ...v })) }))
+    .map(([id, e]) => {
+      const all = smoothLift([...e.dates.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([date, v]) => ({ date, ...v })))
+      const points = all.filter((p) => inWeeks(p.date, weeks))
+      const recent = all.filter((p) => p.date >= win)
+      return { exercise_id: id, name: e.name, sessions: points.length, points, forecast: forecastLift(recent), plateau: liftPlateau(recent) }
+    })
+    .filter((l) => l.sessions > 0)
     .sort((a, b) => b.sessions - a.sessions || a.name.localeCompare(b.name))
     .slice(0, 3)
 
@@ -274,6 +279,8 @@ export function progressFrom(raw: ProgressRaw, period: Period): ProgressDetail {
       daily: raw.days.filter((d) => d.weight_kg != null && inWeeks(d.date, weeks)).map((d) => ({ date: d.date, kg: d.weight_kg! })),
       goal_kg: raw.goal_weight_kg,
       projection,
+      forecast,
+      plateau,
     },
     training: {
       weekly: tWeeks,
@@ -289,10 +296,12 @@ export function progressFrom(raw: ProgressRaw, period: Period): ProgressDetail {
   }
 }
 
-/** The first date the raw data has to cover for a period (its weeks plus the previous ones). */
+/** The first date the raw data has to cover for a period: its weeks, the previous ones and the forecast window. */
 export function rawFrom(period: Period, today: string, startDate: string): string {
   const { weeks, previous } = periodWeeks(period, today, startDate)
-  return previous[0] ?? weeks[0]
+  const first = previous[0] ?? weeks[0]
+  const win = windowStart(today, startDate)
+  return win < first ? win : first
 }
 
 /** Trend vs the previous period: up, down, flat, or none to compare with. */

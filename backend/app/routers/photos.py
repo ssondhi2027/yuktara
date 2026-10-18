@@ -1,4 +1,4 @@
-"""Signed upload links for progress and meal photos (the client)."""
+"""Signed upload links for progress and meal photos (clients) and profile photos (anyone)."""
 
 from fastapi import APIRouter, Depends, Request
 

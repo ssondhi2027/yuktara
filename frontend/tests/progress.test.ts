@@ -1,9 +1,9 @@
-﻿// Unit tests for the Progress page calculations (src/lib/progress.ts).
+// Unit tests for the Progress page calculations (src/lib/progress.ts).
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  doneIn, epley, mondayOf, pctOf, periodWeeks, planStreak, plannedIn, progressFrom, rawFrom, slope, trend, volumeKg,
+  doneIn, mondayOf, pctOf, periodWeeks, planStreak, plannedIn, progressFrom, rawFrom, trend, volumeKg,
   type ProgressRaw,
 } from '../src/lib/progress.ts'
 import { loadValue, toUnit } from '../src/lib/units.ts'
@@ -21,18 +21,12 @@ test('periods are whole weeks, with the same number before them to compare', () 
   // Since start never has a previous period.
   assert.equal(periodWeeks('all', TODAY, '2026-06-01').previous.length, 0)
   assert.equal(periodWeeks('all', TODAY, '2026-06-01').weeks[0], mondayOf('2026-06-01'))
-  assert.equal(rawFrom('p4', TODAY, '2026-06-01'), '2026-08-24')
+  // The raw data also covers the forecasts' 12 weeks.
+  assert.equal(rawFrom('p4', TODAY, '2026-06-01'), '2026-07-27')
+  assert.equal(rawFrom('p4', TODAY, '2026-09-30'), '2026-09-28')
 })
 
-test('estimated 1RM (Epley)', () => {
-  assert.equal(epley(100, 1), 100)
-  assert.equal(epley(100, 5), 100 * (1 + 5 / 30))
-  assert.ok(Math.abs(epley(80, 10) - 106.67) < 0.01)
-  assert.equal(epley(0, 10), 0)
-  assert.equal(epley(60, 0), 0)
-})
-
-test('volume is sets Ã— reps Ã— weight, shown in the user\'s unit', () => {
+test('volume is sets × reps × weight, shown in the user\'s unit', () => {
   const sets = [{ kg: 80, reps: 5 }, { kg: 80, reps: 5 }, { kg: null, reps: 15 }, { kg: 20, reps: null }]
   assert.equal(volumeKg(sets), 800)
   assert.equal(Math.round(toUnit(volumeKg(sets), 'imperial')), 1764)
@@ -75,11 +69,6 @@ test('trend vs the previous period', () => {
   assert.equal(trend({ value: 70.1, previous: 70 }, 0.2), 'flat')
   assert.equal(trend({ value: 70, previous: null }), null)
   assert.equal(trend({ value: null, previous: 70 }), null)
-})
-
-test('slope needs three points', () => {
-  assert.equal(slope([{ x: 0, y: 1 }, { x: 1, y: 2 }]), null)
-  assert.equal(slope([{ x: 0, y: 3 }, { x: 1, y: 2 }, { x: 2, y: 1 }]), -1)
 })
 
 const raw = (over: Partial<ProgressRaw> = {}): ProgressRaw => ({

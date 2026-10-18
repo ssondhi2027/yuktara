@@ -10,6 +10,8 @@ import { GOALS, kindOf, MAJOR_MUSCLES } from '@/lib/programGen'
 import { assignProblems, comingMonday, plannedSets, programProblems, setsRange } from '@/lib/programs'
 import { MUSCLE_GROUPS, type ExerciseLevel, type GoalType } from '@/types/db'
 import { ExercisePicker } from '@/features/client/train/ExercisePicker'
+import { ExerciseForm } from './ExerciseForm'
+import { emptyExercise } from '@/lib/exercises'
 
 const DAY_ORDER = [1, 2, 3, 4, 5, 6, 0]
 const STATUS_LABEL = { template: 'Template', draft: 'Draft', upcoming: 'Assigned', active: 'Running', ended: 'Ended' } as const
@@ -29,6 +31,8 @@ export function ProgramBuilder({ initial }: { initial: Program }) {
   const [problems, setProblems] = useState<string[]>([])
   const [notice, setNotice] = useState<string | null>(null)
   const [picker, setPicker] = useState<{ workout: number; replace?: number } | null>(null)
+  /** "Create an exercise" from the picker: where the new one goes once saved */
+  const [creating, setCreating] = useState<{ workout: number; replace?: number; name: string } | null>(null)
   const [start, setStart] = useState(initial.draft_start ?? initial.start_date ?? comingMonday(today()))
   const library = useQuery({ queryKey: ['exercise-library'], queryFn: api.exerciseLibrary, staleTime: Infinity })
   const client = useQuery({ queryKey: ['client-detail', p.client_id], queryFn: () => api.clientDetail(p.client_id!), enabled: !!p.client_id })
@@ -146,11 +150,11 @@ export function ProgramBuilder({ initial }: { initial: Program }) {
   const isClient = !!p.client_id
   const assignable = isClient && (p.status === 'draft' || p.status === 'upcoming')
 
-  const addExercise = (wi: number, e: LibraryExercise) => {
+  const addExercise = (wi: number, e: LibraryExercise, replace = picker?.replace) => {
     const dose = GOALS[p.goal ?? 'health'][kindOf(e)]
     change((d) => {
       const x: ProgramExercise = { id: null, exercise_id: e.id, name: e.name, sets: 3, reps: dose.reps, rpe: 8, rest_seconds: dose.rest, notes: '' }
-      if (picker?.replace != null) Object.assign(d.workouts[wi].exercises[picker.replace], { exercise_id: e.id, name: e.name })
+      if (replace != null) Object.assign(d.workouts[wi].exercises[replace], { exercise_id: e.id, name: e.name })
       else d.workouts[wi].exercises.push(x)
     })
     setPicker(null)
@@ -310,7 +314,12 @@ export function ProgramBuilder({ initial }: { initial: Program }) {
         <ExercisePicker library={library.data}
           swapFor={picker.replace != null ? byId.get(p.workouts[picker.workout].exercises[picker.replace].exercise_id) : undefined}
           exclude={new Set(p.workouts[picker.workout].exercises.map((x) => x.exercise_id))}
-          onPick={(e) => addExercise(picker.workout, e)} onClose={() => setPicker(null)} />
+          onPick={(e) => addExercise(picker.workout, e)} onClose={() => setPicker(null)}
+          onCreate={(name) => { setCreating({ ...picker, name }); setPicker(null) }} />
+      )}
+      {creating && (
+        <ExerciseForm initial={{ ...emptyExercise(), name: creating.name }} onClose={() => setCreating(null)}
+          onSaved={(e) => addExercise(creating.workout, e, creating.replace)} />
       )}
     </div>
   )

@@ -119,7 +119,7 @@ MAX_PHOTO_BYTES = 5 * 1024 * 1024
 
 
 class UploadUrlRequest(Strict):
-    kind: Literal["progress", "meals"]
+    kind: Literal["progress", "meals", "avatar"]
     content_type: Literal["image/jpeg", "image/png", "image/webp"]
     size_bytes: int = Field(ge=1, le=MAX_PHOTO_BYTES)
 

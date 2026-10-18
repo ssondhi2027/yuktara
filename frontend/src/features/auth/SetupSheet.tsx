@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router'
 import { useAuth } from '@/app/auth'
 import { completeSetup, type SetupAnswers } from '@/lib/auth'
-import { heightProblem, weightProblem } from '@/lib/profile'
+import { phoneProblem, heightProblem, weightProblem } from '@/lib/profile'
 import { CheckMark } from './AuthPage'
 import { ResendLink } from './ResendLink'
 
@@ -74,6 +74,8 @@ export function SetupSheet({ email, fullName, coachFirstName, justCreated, justC
       const h = heightProblem(d.height, d.units)
       if (h) e.height = h
       if (d.date_of_birth && d.date_of_birth >= new Date().toISOString().slice(0, 10)) e.date_of_birth = 'Check your date of birth.'
+      const ph = phoneProblem(d.phone)
+      if (ph) e.phone = ph
     }
     if (s === 2) {
       if (!d.goal) e.goal = 'Choose your main goal.'
@@ -186,7 +188,8 @@ export function SetupSheet({ email, fullName, coachFirstName, justCreated, justC
                       {err.height && <span className="field-err">{err.height}</span>}
                     </label>
                     <label className="auth-label">Phone (optional)
-                      <input className="auth-input" type="tel" autoComplete="tel" value={d.phone} onChange={(e) => set('phone', e.target.value)} />
+                      <input className="auth-input" type="tel" autoComplete="tel" maxLength={32} value={d.phone} onChange={(e) => set('phone', e.target.value)} />
+                      {err.phone && <span className="field-err">{err.phone}</span>}
                     </label>
                   </div>
                 </>

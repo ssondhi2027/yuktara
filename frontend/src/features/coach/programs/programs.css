@@ -57,3 +57,7 @@
   padding: 12px 0 calc(12px + env(safe-area-inset-bottom)); background: linear-gradient(transparent, var(--bg) 18px);
 }
 @media (max-width: 767.98px) { .builder-actions { bottom: calc(var(--nav-h) + env(safe-area-inset-bottom)); } }
+
+/* The coach's own exercises (Exercises tab, "Create an exercise" from the picker) */
+.exercise-form .ex-muscles { border: 0; margin: 0; padding: 0; min-width: 0; }
+.exercise-form .ex-muscles legend { padding: 0; margin-bottom: 6px; font-weight: 600; font-size: 14px; }

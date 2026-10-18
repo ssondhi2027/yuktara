@@ -1,0 +1,15 @@
+/* Insights card (client Progress page, coach client view and check-in review) */
+.signals { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.signals .card-head { margin-bottom: 0; flex-wrap: wrap; }
+.signal-row { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 10px; align-items: start; }
+.signal-icon { color: var(--leaf); margin-top: 2px; }
+.signal-icon.note { color: var(--peach-ink); }
+.signal-main { margin: 0 0 2px; font-weight: 600; line-height: 1.4; }
+.signal-row p { margin: 0; }
+.signal-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; line-height: 1.4; font-size: 14px; }
+.signal-quiet { margin: 0; }
+.signal-foot { margin: 0; line-height: 1.4; }
+.kpi-note { color: var(--peach-ink); font-weight: 600; line-height: 1.35; }
+.row-flags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.row-flags .pill { font-size: 11px; padding: 1px 8px; }
+.lift-notes { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }

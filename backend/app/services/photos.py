@@ -1,4 +1,4 @@
-"""Signed upload links for the private photo buckets.
+"""Signed upload links for the private photo buckets (progress, meal and profile photos).
 
 The path is built here from the verified user id, so a client can only ever
 upload into their own folder. The buckets themselves (0008_storage.sql) also
@@ -19,7 +19,7 @@ from fastapi import HTTPException, status
 from app.config import Settings
 from app.schemas import UploadUrlRequest, UploadUrlResult
 
-BUCKETS = {"progress": "progress-photos", "meals": "meal-photos"}
+BUCKETS = {"progress": "progress-photos", "meals": "meal-photos", "avatar": "avatars"}
 EXTENSIONS = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
 SIGNED_UPLOAD_SECONDS = 2 * 60 * 60  # Supabase signed upload links last two hours
 

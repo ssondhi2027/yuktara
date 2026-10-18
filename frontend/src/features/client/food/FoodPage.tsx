@@ -1,9 +1,11 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Camera, ChevronLeft, ChevronRight, Image as ImageIcon, Plus, Search } from 'lucide-react'
-import { api, type FoodDay, type Meal } from '@/lib/api'
+import { Camera, ChevronLeft, ChevronRight, ClipboardList, Image as ImageIcon, Plus, Search } from 'lucide-react'
+import { api, type DayPlanMeal, type FoodDay, type Meal } from '@/lib/api'
 import { addDays, clockTime, monthDay, shortDay, today, weekStart } from '@/lib/dates'
+import { amountText, lineAmountText, PLAN_DAY_LABEL, type FoodLine } from '@/lib/meals'
 import { int } from '@/lib/units'
+import { useUnits } from '@/app/auth'
 import type { MealType, OnPlan } from '@/types/db'
 import { MacroBar } from '@/components/ui/MacroBar'
 import { PageError, PageLoading } from '@/components/ui/Loading'
@@ -29,7 +31,7 @@ export function FoodPage() {
       qc.invalidateQueries({ queryKey: ['client-home'] })
     },
   })
-  const [sheet, setSheet] = useState<{ mode: MealSheetMode; mealType: MealType; photo?: File } | null>(null)
+  const [sheet, setSheet] = useState<{ mode: MealSheetMode; mealType: MealType; photo?: File; lines?: FoodLine[] } | null>(null)
 
   const isToday = date === TODAY
   const label = isToday ? `Today, ${monthDay(date)}` : date === addDays(TODAY, -1) ? `Yesterday, ${monthDay(date)}` : monthDay(date)
@@ -48,7 +50,7 @@ export function FoodPage() {
       {isPending ? <PageLoading /> : error ? <PageError error={error} /> : (
         <div className="food-layout">
           <Summary day={data} rating={data.day_rating} onRate={(r) => rate.mutate(r)} isToday={isToday} />
-          <MealList day={data} onAdd={(mode, mealType, photo) => setSheet({ mode, mealType, photo })} />
+          <MealList day={data} onAdd={(mode, mealType, photo, lines) => setSheet({ mode, mealType, photo, lines })} />
         </div>
       )}
 
@@ -58,6 +60,8 @@ export function FoodPage() {
           mode={sheet.mode}
           mealType={sheet.mealType}
           photo={sheet.photo}
+          planned={data.plan?.meals.find((m) => m.meal_type === sheet.mealType)}
+          initialLines={sheet.lines}
           onClose={() => setSheet(null)}
           onSaved={() => {
             setSheet(null)
@@ -143,42 +147,83 @@ function Summary({ day, rating, onRate, isToday }: { day: FoodDay; rating: OnPla
 const TYPE_LABEL: Record<MealType, string> = { breakfast: 'Breakfast', lunch: 'Lunch', dinner: 'Dinner', snack: 'Snack' }
 const TONE: Record<MealType, string> = { breakfast: 'peach', snack: 'mint', lunch: 'sage', dinner: 'sand' }
 
-function MealList({ day, onAdd }: { day: FoodDay; onAdd: (mode: MealSheetMode, type: MealType, photo?: File) => void }) {
+const ORDER: MealType[] = ['breakfast', 'snack', 'lunch', 'dinner']
+type OnAdd = (mode: MealSheetMode, type: MealType, photo?: File, lines?: FoodLine[]) => void
+
+/**
+ * Each meal of the day: what the coach planned (foods and amounts), then what
+ * was logged. "Log as planned" logs the planned foods (amounts editable before
+ * saving); "Log something else" opens the normal flow. Without a plan, logging
+ * works as before.
+ */
+function MealList({ day, onAdd }: { day: FoodDay; onAdd: OnAdd }) {
   const onPlan = day.meals.filter((m) => m.on_plan === 'yes').length
-  const missing = day.planned.filter((p) => !day.meals.some((m) => m.meal_type === p))
+  const plan = day.plan
+  const types = ORDER.filter((t) => day.planned.includes(t) || plan?.meals.some((m) => m.meal_type === t) || day.meals.some((m) => m.meal_type === t))
   return (
     <section className="stack">
       <div className="between">
         <h3>Meals</h3>
         <span className="muted">{onPlan} of {day.meals.length} on plan</span>
       </div>
-      {day.meals.length === 0 && <p className="muted small">Nothing logged for this day.</p>}
-      {day.meals.map((m) => <MealCard key={m.id} meal={m} />)}
-      {missing.map((type) => (
-        <div key={type} className="missing-meal">
-          <div className="between">
-            <b>{TYPE_LABEL[type]}</b>
-            <span className="muted">Not logged yet</span>
-          </div>
-          <div className="grid grid-3" style={{ gap: 8 }}>
-            <label className="btn btn-primary btn-square">
-              <Camera size={18} /> Photo
-              <input type="file" accept="image/*" capture="environment" hidden
-                onChange={(e) => e.target.files?.[0] && onAdd('photo', type, e.target.files[0])} />
-            </label>
-            <button className="btn btn-ghost btn-square" onClick={() => onAdd('search', type)}><Search size={18} /> Search</button>
-            <button className="btn btn-ghost btn-square" onClick={() => onAdd('quick', type)}><Plus size={18} /> Quick add</button>
-          </div>
-        </div>
+      {plan ? (
+        <p className="xs muted plan-note">
+          <ClipboardList size={14} aria-hidden /> Your coach's meal plan{plan.day !== 'every' ? ` (${PLAN_DAY_LABEL[plan.day].toLowerCase().replace(/s$/, '')})` : ''}:
+          {' '}{int(plan.nutrition.calories)} kcal · P {int(plan.nutrition.protein_g)} g a day
+        </p>
+      ) : <p className="small muted plan-note">Your coach hasn't set a meal plan. Log what you eat as usual.</p>}
+      {types.map((t) => (
+        <MealSlot key={t} type={t} planned={plan?.meals.find((m) => m.meal_type === t)} logged={day.meals.filter((m) => m.meal_type === t)} onAdd={onAdd} />
       ))}
-      {missing.length === 0 && (
-        <button className="btn btn-ghost btn-square" onClick={() => onAdd('quick', 'snack')}><Plus size={18} /> Add a snack</button>
-      )}
+      <button className="btn btn-ghost btn-square" onClick={() => onAdd('foods', 'snack')}><Plus size={18} /> Add a snack</button>
     </section>
   )
 }
 
+function MealSlot({ type, planned, logged, onAdd }: { type: MealType; planned?: DayPlanMeal; logged: Meal[]; onAdd: OnAdd }) {
+  const units = useUnits()
+  const hasPlan = !!planned && planned.lines.length > 0
+  const photo = (
+    <label className="btn btn-ghost btn-square" title="Log with a photo">
+      <Camera size={18} /> Photo
+      <input type="file" accept="image/*" capture="environment" hidden onChange={(e) => e.target.files?.[0] && onAdd('foods', type, e.target.files[0])} />
+    </label>
+  )
+  return (
+    <div className={`meal-slot${logged.length ? ' logged' : ''}`}>
+      <div className="between">
+        <b>{TYPE_LABEL[type]}</b>
+        {hasPlan && <span className="xs muted">Planned {int(planned!.nutrition.calories)} kcal · P {int(planned!.nutrition.protein_g)} g</span>}
+        {!hasPlan && !logged.length && <span className="muted small">Not logged yet</span>}
+      </div>
+      {hasPlan && (
+        <div className="planned-meal">
+          <ul>
+            {planned!.lines.map((l, i) => <li key={i} className="small"><span>{l.food.name}</span> <span className="muted">{lineAmountText(l, units)}</span></li>)}
+          </ul>
+          {planned!.notes && <p className="xs muted">Coach's note: {planned!.notes}</p>}
+        </div>
+      )}
+      {logged.map((m) => <MealCard key={m.id} meal={m} />)}
+      {hasPlan ? (
+        <div className="slot-actions">
+          {!logged.length && <button className="btn btn-primary btn-square" onClick={() => onAdd('foods', type, undefined, planned!.lines)}>Log as planned</button>}
+          <button className="btn btn-ghost btn-square" onClick={() => onAdd('foods', type)}><Search size={18} /> {logged.length ? 'Log more' : 'Log something else'}</button>
+          {photo}
+        </div>
+      ) : (
+        <div className="slot-actions">
+          {photo}
+          <button className="btn btn-ghost btn-square" onClick={() => onAdd('foods', type)}><Search size={18} /> Foods</button>
+          <button className="btn btn-ghost btn-square" onClick={() => onAdd('quick', type)}><Plus size={18} /> Quick add</button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function MealCard({ meal: m }: { meal: Meal }) {
+  const units = useUnits()
   const pill = m.on_plan === 'yes' ? { cls: 'good', text: 'On plan' } : m.on_plan === 'partly' ? { cls: '', text: 'Partly' } : { cls: 'warn', text: 'Off plan' }
   return (
     <article className="meal-card">
@@ -189,6 +234,16 @@ function MealCard({ meal: m }: { meal: Meal }) {
         <div className="small muted">{TYPE_LABEL[m.meal_type]} · {clockTime(m.eaten_at)}</div>
         <div className="meal-title truncate">{m.title}</div>
         <div className="small muted">{m.calories} kcal · P {m.protein_g} · C {m.carbs_g} · F {m.fat_g}</div>
+        {m.items && m.items.length > 0 && (
+          <details className="meal-items">
+            <summary className="xs">{m.items.length} {m.items.length === 1 ? 'food' : 'foods'}</summary>
+            <ul>
+              {m.items.map((x, i) => (
+                <li key={i} className="xs muted">{x.food_name} · {amountText(x.quantity, x.unit, x.serving, units)} · {x.calories} kcal · P {x.protein_g}</li>
+              ))}
+            </ul>
+          </details>
+        )}
       </div>
       <span className={`pill ${pill.cls}`}>{pill.text}</span>
     </article>

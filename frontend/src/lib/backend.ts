@@ -41,7 +41,7 @@ interface UploadUrl { bucket: string; path: string; signed_url: string; token: s
  * for the user's own folder from the backend and uploads to it. Returns the
  * storage path to save in the database.
  */
-export async function uploadPhoto(kind: 'progress' | 'meals', localUrl: string): Promise<string> {
+export async function uploadPhoto(kind: 'progress' | 'meals' | 'avatar', localUrl: string): Promise<string> {
   const blob = await (await fetch(localUrl)).blob()
   const jpeg = await compressImage(new File([blob], 'photo', { type: blob.type || 'image/jpeg' }))
   const up = await backend<UploadUrl>('/photos/upload-url', { kind, content_type: 'image/jpeg', size_bytes: jpeg.size })

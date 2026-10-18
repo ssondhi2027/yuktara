@@ -581,7 +581,9 @@ def start_session(template_id: str | None) -> httpx.Response:
     )
 
 
-def tick(session_id: str, exercise: str, n: int, reps: int, kg: float | None, rpe: float | None, slot=None) -> None:
+def tick(
+    session_id: str, exercise: str, n: int, reps: int, kg: float | None, rpe: float | None, slot=None, warmup=False
+) -> None:
     r = client.write(
         "POST",
         "set_logs",
@@ -593,12 +595,13 @@ def tick(session_id: str, exercise: str, n: int, reps: int, kg: float | None, rp
             "reps": reps,
             "weight_kg": kg,
             "rpe": rpe,
-            "is_warmup": False,
+            "is_warmup": warmup,
         },
         prefer="resolution=merge-duplicates,return=minimal",
         on_conflict="session_id,exercise_id,set_number",
     )
-    check(r.status_code in (200, 201), f"set saved as it's ticked: {exercise} #{n} {reps} reps @ {kg} kg, RPE {rpe}")
+    kind = "warm-up" if warmup else "set"
+    check(r.status_code in (200, 201), f"{kind} saved as it's ticked: {exercise} #{n} {reps} reps @ {kg} kg, RPE {rpe}")
 
 
 planned = start_session(template["id"]).json()[0]["id"]
@@ -614,6 +617,16 @@ sets_now = {
 check(
     sets_now.get("quads", 0) >= 2, f"body map counts the sets while the workout is open (quads {sets_now.get('quads')})"
 )
+tick(planned, "Goblet squat", 3, 8, 12, None, slot=squat_slot, warmup=True)  # marked W in the logger
+warm = {
+    r["muscle"]: r["hard_sets"]
+    for r in client.rpc("muscle_sets_for_week", {"client": client.id, "week_start": monday}).json()
+}
+check(warm.get("quads") == sets_now.get("quads"), "a warm-up set is saved but left out of the body map count")
+check(
+    client.get("set_logs", select="is_warmup", session_id=f"eq.{planned}", set_number="eq.3")[0]["is_warmup"] is True,
+    "the warm-up flag is stored on the set",
+)
 r = client.write(
     "PATCH",
     "workout_sessions",
@@ -622,10 +635,14 @@ r = client.write(
         "duration_min": 45,
         "status": "done",
         "notes": "Goblet squats today, gym was busy",
+        "effort": 7,
     },
     id=f"eq.{planned}",
 )
-check(r.status_code == 200 and r.json()[0]["status"] == "done", "Finish workout sets finished_at, duration and status")
+check(
+    r.status_code == 200 and r.json()[0]["status"] == "done" and r.json()[0]["effort"] == 7,
+    "Finish workout sets finished_at, duration, status and effort",
+)
 check(
     client.get("template_exercises", select="exercise_id", id=f"eq.{squat_slot}")[0]["exercise_id"] == ex["Back squat"],
     "the swap didn't change the coach's program",
@@ -644,7 +661,8 @@ r = client.write(
 check(r.status_code == 200, "client finishes an extra workout of their own")
 
 SESSION_SUMMARY_COLS = (
-    "id, performed_on, finished_at, duration_min, notes, workout_templates(name), set_logs(set_number, reps, weight_kg,"
+    "id, performed_on, finished_at, duration_min, notes, effort, status, workout_templates(name), set_logs(set_number,"
+    " reps, weight_kg,"
     " rpe, is_warmup, exercise_id, exercises(name, exercise_muscles(muscle, role)))"
 ).replace(" ", "")
 seen = coach.get(
@@ -774,14 +792,386 @@ check(
     "the coach doesn't see the other client",
 )
 
+step("Phone for the coach, the coach's own exercise, a skipped workout, profile pictures, foods in a meal")
+# Phone: the client changes it on their Profile; the coach sees it with the setup answers.
+# As the Profile page does: no row back (coach_notes isn't readable by clients).
+r = client.write(
+    "PATCH", "client_profiles", {"phone": "+1 555 0100"}, prefer="return=minimal", user_id=f"eq.{client.id}"
+)
+check(r.status_code == 204, "client saves a phone number on their Profile")
+check(
+    coach.get("client_profiles", select="phone", user_id=f"eq.{client.id}")[0]["phone"] == "+1 555 0100",
+    "coach sees the phone number",
+)
+
+# The coach's own exercise: saved with its muscles in one call; their client sees it, others don't.
+r = coach.rpc(
+    "save_exercise",
+    {
+        "e": {
+            "name": f"Belt squat {TAG}",
+            "level": "beginner",
+            "equipment": "machine",
+            "primary": ["quads"],
+            "secondary": ["glutes"],
+        }
+    },
+)
+check(r.status_code == 200, "coach adds their own exercise (save_exercise)")
+custom = r.json()
+lib = client.get("exercises", select="id,name,created_by,exercise_muscles(muscle,role)", id=f"eq.{custom}")
+check(
+    len(lib) == 1 and lib[0]["created_by"] == coach.id and len(lib[0]["exercise_muscles"]) == 2,
+    "the client's exercise library includes it, with its muscles",
+)
+check(other.get("exercises", select="id", id=f"eq.{custom}") == [], "another coach's client doesn't see it")
+r = client.rpc("save_exercise", {"e": {"name": f"Mine {TAG}", "primary": ["quads"]}})
+check(r.status_code >= 400, "clients can't add exercises")
+r = coach.write("DELETE", "exercises", None, id=f"eq.{custom}")
+check(
+    r.status_code in (200, 204) and coach.get("exercises", select="id", id=f"eq.{custom}") == [],
+    "coach deletes an unused one",
+)
+
+# A skipped workout: no sets, a reason the coach sees, undone by deleting it.
+r = client.write(
+    "POST",
+    "workout_sessions",
+    {
+        "client_id": client.id,
+        "workout_template_id": template["id"],
+        "performed_on": str(today + timedelta(days=1)),
+        "started_at": None,
+        "finished_at": f"{today}T20:00:00Z",
+        "duration_min": None,
+        "status": "skipped",
+        "notes": "Travel",
+    },
+)
+check(r.status_code == 201, "client skips tomorrow's workout with a reason")
+skip = r.json()[0]["id"]
+seen = coach.get("workout_sessions", select="status,notes", id=f"eq.{skip}")
+check(seen == [{"status": "skipped", "notes": "Travel"}], "coach sees the skip and why")
+r = client.write(
+    "POST",
+    "set_logs",
+    {"session_id": skip, "exercise_id": ex["Back squat"], "set_number": 1, "reps": 5, "weight_kg": 60},
+)
+check(r.status_code >= 400, "no sets can be logged in a skipped workout")
+r = client.write("DELETE", "workout_sessions", None, id=f"eq.{skip}")
+check(r.status_code in (200, 204), "client undoes the skip")
+
+# Profile pictures: upload link from the API, the file in the user's own folder, signed URLs for the coach only.
+up = coach.api("POST", "/photos/upload-url", {"kind": "avatar", "content_type": "image/jpeg", "size_bytes": 200})
+check(up.status_code == 200 and up.json()["bucket"] == "avatars", "backend signs an upload link for a profile photo")
+put = http.put(up.json()["signed_url"], content=b"\xff\xd8\xff\xe0avatar", headers={"content-type": "image/jpeg"})
+check(put.status_code == 200, "photo uploaded to the coach's own avatar folder")
+avatar = up.json()["path"]
+r = coach.write("PATCH", "users", {"avatar_url": avatar}, id=f"eq.{coach.id}")
+check(r.status_code == 200, "coach's profile points at the new photo")
+r = client.write("PATCH", "users", {"avatar_url": f"{coach.id}/avatar/x.jpg"}, id=f"eq.{client.id}")
+check(r.status_code >= 400, "a profile can't point at someone else's photo")
+rows = client.get("users", select="id,avatar_url", avatar_url="not.is.null")
+check([x["id"] for x in rows] == [coach.id], "the client sees their coach's photo path")
+
+
+def sign(who, path):
+    return http.post(
+        f"{SUPABASE}/storage/v1/object/sign/avatars/{path}", headers=who.h, json={"expiresIn": 60}
+    ).status_code
+
+
+check(sign(client, avatar) == 200, "the client gets a signed link to the coach's photo")
+check(sign(other, avatar) >= 400, "another coach's client can't")
+
+# Foods in a meal: the client lists them; the coach reads them but can't add any.
+r = client.write(
+    "POST",
+    "meal_logs",
+    {"client_id": client.id, "meal_type": "dinner", "title": "Rice, chicken", "calories": 508, "protein_g": 51.9},
+)
+meal_id = r.json()[0]["id"]
+items = [
+    {
+        "meal_log_id": meal_id,
+        "food_name": "Rice, cooked",
+        "quantity": 200,
+        "unit": "g",
+        "calories": 260,
+        "protein_g": 5.4,
+    },
+    {
+        "meal_log_id": meal_id,
+        "food_name": "Chicken breast",
+        "quantity": 150,
+        "unit": "g",
+        "calories": 248,
+        "protein_g": 46.5,
+    },
+]
+check(client.write("POST", "meal_items", items).status_code == 201, "client saves the foods in a meal")
+check(len(coach.get("meal_items", select="food_name", meal_log_id=f"eq.{meal_id}")) == 2, "coach reads them")
+r = coach.write("POST", "meal_items", {**items[0], "food_name": "Coach adds"})
+check(r.status_code >= 400, "coach can't add foods to a client's meal")
+check(other.get("meal_items", select="id", meal_log_id=f"eq.{meal_id}") == [], "another client sees none")
+r = client.write("POST", "meal_items", {**items[0], "unit": "kg"})
+check(r.status_code >= 400, "units outside the list are refused")
+
+step(
+    "Meal plans: the coach plans the client's meals; the client logs as planned and something else; the coach compares"
+)
+FOOD_COLS = "id,name,basis,kcal,protein_g,carbs_g,fat_g,servings,created_by"
+foods = {f["name"]: f for f in client.get("foods", select=FOOD_COLS, created_by="is.null")}
+check(len(foods) >= 40 and "Roti (chapati)" in foods, f"the client sees the shared food list ({len(foods)} foods)")
+r = coach.write(
+    "POST",
+    "foods",
+    {
+        "name": f"Coach's protein oats {TAG}",
+        "basis": "g",
+        "kcal": 390,
+        "protein_g": 25,
+        "carbs_g": 55,
+        "fat_g": 7,
+        "servings": [{"name": "1 pot", "amount": 80}],
+        "created_by": coach.id,
+    },
+)
+check(r.status_code == 201, "coach adds a food of their own (per 100 g, with a serving)")
+own_food = r.json()[0]["id"]
+check(client.get("foods", select="id", id=f"eq.{own_food}") != [], "their client sees it")
+check(other.get("foods", select="id", id=f"eq.{own_food}") == [], "another coach's client doesn't")
+
+
+def plan_item(name, meal, qty, unit="g", serving=None, food_id=None):
+    return {
+        "day_type": "every",
+        "meal_type": meal,
+        "position": 0,
+        "food_id": food_id or foods[name]["id"],
+        "quantity": qty,
+        "unit": unit,
+        "serving": serving,
+    }
+
+
+plan_body = {
+    "client_id": client.id,
+    "effective_from": str(today),
+    "name": "Walkthrough plan",
+    "split": False,
+    "notes": {"every:lunch": "Or swap rice for quinoa."},
+    "items": [
+        plan_item(None, "breakfast", 1, "serving", "1 pot", food_id=own_food),
+        plan_item("Banana", "breakfast", 1, "serving", "1 medium"),
+        plan_item("Chicken breast, grilled", "lunch", 150),
+        plan_item("Rice, white, cooked", "lunch", 1, "serving", "1 cup"),
+    ],
+}
+r = coach.rpc("save_meal_plan", {"p": plan_body})
+check(r.status_code == 200, "coach saves a meal plan for the client, starting today")
+plan_id = r.json()
+check(other.get("meal_plans", select="id", id=f"eq.{plan_id}") == [], "another client can't see it")
+r = client.write("PATCH", "meal_plans", {"name": "Mine now"}, id=f"eq.{plan_id}")
+check(
+    r.status_code == 200 and r.json() == [],  # RLS: no row to update
+    "the client can't change their plan",
+)
+check(
+    coach.get("meal_plans", select="name", id=f"eq.{plan_id}")[0]["name"] == "Walkthrough plan",
+    "the plan is unchanged",
+)
+
+PLAN_COLS = (
+    "id,client_id,name,effective_from,split,notes,"
+    f"meal_plan_items(day_type,meal_type,position,quantity,unit,serving,foods({FOOD_COLS}))"
+)
+mine = client.get(
+    "meal_plans",
+    select=PLAN_COLS,
+    client_id=f"eq.{client.id}",
+    effective_from=f"lte.{today}",
+    order="effective_from.desc",
+    limit="1",
+)
+check(
+    len(mine) == 1 and len(mine[0]["meal_plan_items"]) == 4 and all(i["foods"] for i in mine[0]["meal_plan_items"]),
+    "the client's Food page reads today's plan with every food (including the coach's own)",
+)
+check(mine[0]["notes"] == {"every:lunch": "Or swap rice for quinoa."}, "and the coach's note for lunch")
+
+# "Log as planned": the planned lunch, then the client changes the rice amount before saving.
+chicken, rice = foods["Chicken breast, grilled"], foods["Rice, white, cooked"]
+
+
+def per(food, grams):
+    k = grams / 100
+    return {
+        "calories": round(float(food["kcal"]) * k),
+        "protein_g": round(float(food["protein_g"]) * k, 1),
+        "carbs_g": round(float(food["carbs_g"]) * k, 1),
+        "fat_g": round(float(food["fat_g"]) * k, 1),
+    }
+
+
+lunch_items = [
+    {
+        "food_id": chicken["id"],
+        "food_name": chicken["name"],
+        "quantity": 150,
+        "unit": "g",
+        "serving": None,
+        **per(chicken, 150),
+    },
+    {
+        "food_id": rice["id"],
+        "food_name": rice["name"],
+        "quantity": 1,
+        "unit": "serving",
+        "serving": "1 cup",
+        **per(rice, 158),
+    },
+]
+totals = {k: sum(i[k] for i in lunch_items) for k in ("calories", "protein_g", "carbs_g", "fat_g")}
+r = client.write(
+    "POST",
+    "meal_logs",
+    {
+        "client_id": client.id,
+        "meal_type": "lunch",
+        "title": "Chicken breast, grilled and Rice, white, cooked",
+        "on_plan": "yes",
+        **totals,
+    },
+)
+lunch = r.json()[0]["id"]
+r = client.write("POST", "meal_items", [{"meal_log_id": lunch, **i} for i in lunch_items])
+check(r.status_code == 201, "client logs lunch as planned (foods with amounts, from the plan)")
+rice_row = client.get("meal_items", select="id", meal_log_id=f"eq.{lunch}", food_id=f"eq.{rice['id']}")[0]["id"]
+r = client.write(
+    "PATCH", "meal_items", {"quantity": 1.5, **per(rice, 237)}, prefer="return=minimal", id=f"eq.{rice_row}"
+)
+check(r.status_code == 204, "client changes the rice to 1.5 cups (calories and macros recalculated)")
+saved = client.get("meal_items", select="calories,serving", id=f"eq.{rice_row}")[0]
+check(saved == {"calories": per(rice, 237)["calories"], "serving": "1 cup"}, "the new amount's numbers are saved")
+
+# Something else: a food typed in by hand (not in the list), as a snack.
+r = client.write(
+    "POST",
+    "meal_logs",
+    {
+        "client_id": client.id,
+        "meal_type": "snack",
+        "title": "Mum's laddoo",
+        "calories": 180,
+        "protein_g": 4,
+        "on_plan": "no",
+    },
+)
+snack = r.json()[0]["id"]
+r = client.write(
+    "POST",
+    "meal_items",
+    {
+        "meal_log_id": snack,
+        "food_id": None,
+        "food_name": "Mum's laddoo",
+        "quantity": 40,
+        "unit": "g",
+        "calories": 180,
+        "protein_g": 4,
+    },
+)
+check(r.status_code == 201, "client logs a snack that isn't in the food list")
+
+# The coach compares the week: plan in force and what was logged, per meal.
+week_plans = coach.get(
+    "meal_plans",
+    select=PLAN_COLS,
+    client_id=f"eq.{client.id}",
+    effective_from=f"lte.{monday}",
+    order="effective_from.desc",
+)
+week_plans += coach.get(
+    "meal_plans",
+    select=PLAN_COLS,
+    client_id=f"eq.{client.id}",
+    effective_from=f"gt.{monday}",
+    order="effective_from.desc",
+)
+logged = coach.get(
+    "meal_logs",
+    select="eaten_at,meal_type,calories,protein_g,carbs_g,fat_g,on_plan,meal_items(food_id,food_name,quantity,unit,serving)",
+    client_id=f"eq.{client.id}",
+    eaten_at=f"gte.{monday}T00:00:00Z",
+)
+lunches = [m for m in logged if m["meal_type"] == "lunch" and m["meal_items"]]
+check(any(p["id"] == plan_id for p in week_plans), "coach reads the plan in force this week")
+check(
+    lunches and {i["food_id"] for i in lunches[0]["meal_items"]} == {chicken["id"], rice["id"]},
+    "coach sees the logged lunch next to the planned one (same foods)",
+)
+check(any(m["meal_type"] == "snack" and m["on_plan"] == "no" for m in logged), "and the off-plan snack")
+r = other.rpc("save_meal_plan", {"p": {**plan_body, "effective_from": str(today + timedelta(days=1))}})
+check(r.status_code >= 400, "a client can't write meal plans")
+
 print("\nWalkthrough passed.")
 
 step("The apps' own queries (same select strings as frontend/src/lib/live) all run under RLS")
 PROFILE_COLS = (
     "user_id, status, goal, start_date, start_weight_kg, goal_weight_kg, check_in_day, setup_completed_at,"
-    " date_of_birth, height_cm, experience, training_days, train_location, injuries, diet, foods_to_avoid,"
+    " date_of_birth, phone, height_cm, experience, training_days, train_location, injuries, diet, foods_to_avoid,"
     " meals_per_day"
 ).replace(" ", "")
+
+
+def progress_queries(uid):
+    """The Progress page's queries (progressRawFor): the client for themselves, or their coach."""
+    return [
+        ("client_profiles", {"select": "start_date,goal_weight_kg", "user_id": f"eq.{uid}"}),
+        (
+            "daily_logs",
+            {
+                "select": "log_date,weight_kg,steps,water_ml,sleep_hours",
+                "client_id": f"eq.{uid}",
+                "log_date": f"gte.{monday}",
+            },
+        ),
+        ("meal_logs", {"select": "eaten_at,calories,protein_g,on_plan", "client_id": f"eq.{uid}"}),
+        (
+            "nutrition_targets",
+            {"select": "calories,protein_g,water_ml,steps,sleep_hours,effective_from", "client_id": f"eq.{uid}"},
+        ),
+        (
+            "programs",
+            {
+                "select": "start_date,weeks,workout_templates(day_of_week,removed_at)",
+                "client_id": f"eq.{uid}",
+                "assigned_at": "not.is.null",
+                "start_date": f"lte.{today}",
+            },
+        ),
+        (
+            "workout_sessions",
+            {
+                "select": "performed_on,workout_template_id,set_logs(exercise_id,reps,weight_kg,rpe,is_warmup,"
+                "exercises(name,exercise_muscles(muscle,role)))",
+                "client_id": f"eq.{uid}",
+                "finished_at": "not.is.null",
+                "status": "neq.skipped",
+            },
+        ),
+        (
+            "check_ins",
+            {
+                "select": "week_start,waist_cm,hips_cm,energy,sleep,stress,hunger",
+                "client_id": f"eq.{uid}",
+                "status": "in.(submitted,reviewed)",
+            },
+        ),
+    ]
+
+
 client_queries = [
     (
         "programs",
@@ -831,11 +1221,44 @@ client_queries = [
             "workout_sessions.performed_on": f"gte.{monday}",
         },
     ),
-    ("exercises", {"select": "id,name,level,equipment,cue,exercise_muscles(muscle,role)", "order": "name"}),
+    ("exercises", {"select": "id,name,level,equipment,cue,created_by,exercise_muscles(muscle,role)", "order": "name"}),
+    # Food day: meals with their foods (meal_items, 0021)
+    (
+        "meal_logs",
+        {
+            "select": "id,eaten_at,meal_type,title,calories,protein_g,carbs_g,fat_g,on_plan,photo_url,"
+            "meal_items(food_id,food_name,quantity,unit,serving,calories,protein_g,carbs_g,fat_g)",
+            "client_id": f"eq.{client.id}",
+        },
+    ),
+    # Train week: skips (0019)
     (
         "workout_sessions",
         {
-            "select": "id,workout_template_id,performed_on,started_at,workout_templates(name),set_logs(count)",
+            "select": "id,workout_template_id,performed_on,finished_at,status,notes",
+            "client_id": f"eq.{client.id}",
+            "performed_on": f"gte.{monday}",
+        },
+    ),
+    # Food list and meal plans (0022, 0023): lib/live/mealplans.ts
+    ("foods", {"select": "id,name,basis,kcal,protein_g,carbs_g,fat_g,servings,created_by", "order": "name"}),
+    (
+        "meal_plans",
+        {
+            "select": PLAN_COLS,
+            "client_id": f"eq.{client.id}",
+            "effective_from": f"lte.{today}",
+            "order": "effective_from.desc",
+            "limit": "1",
+        },
+    ),
+    # Profile pictures (0020)
+    ("users", {"select": "id,avatar_url", "avatar_url": "not.is.null"}),
+    ("users", {"select": "avatar_url", "id": f"eq.{client.id}"}),
+    (
+        "workout_sessions",
+        {
+            "select": "id,workout_template_id,performed_on,started_at,workout_templates(name),set_logs(is_warmup)",
             "client_id": f"eq.{client.id}",
             "finished_at": "is.null",
         },
@@ -843,8 +1266,8 @@ client_queries = [
     (
         "workout_sessions",
         {
-            "select": "id,workout_template_id,performed_on,started_at,finished_at,duration_min,notes,"
-            "workout_templates(name),set_logs(exercise_id,template_exercise_id,set_number,reps,weight_kg,rpe)",
+            "select": "id,workout_template_id,performed_on,started_at,finished_at,duration_min,notes,effort,"
+            "workout_templates(name),set_logs(exercise_id,template_exercise_id,set_number,reps,weight_kg,rpe,is_warmup)",
             "id": f"eq.{planned}",
         },
     ),
@@ -860,42 +1283,13 @@ client_queries = [
         },
     ),
     ("users", {"select": "id,full_name,unit_system", "id": f"eq.{client.id}"}),
-    # Progress page (lib/live/client.ts progressDetail): one round of queries for the period.
-    (
-        "daily_logs",
-        {
-            "select": "log_date,weight_kg,steps,water_ml,sleep_hours",
-            "client_id": f"eq.{client.id}",
-            "log_date": f"gte.{monday}",
-        },
-    ),
-    ("meal_logs", {"select": "eaten_at,calories,protein_g,on_plan", "client_id": f"eq.{client.id}"}),
-    (
-        "programs",
-        {"select": "start_date,weeks,workout_templates(day_of_week,removed_at)", "client_id": f"eq.{client.id}"},
-    ),
-    (
-        "workout_sessions",
-        {
-            "select": "performed_on,workout_template_id,set_logs(exercise_id,reps,weight_kg,is_warmup,"
-            "exercises(name,exercise_muscles(muscle,role)))",
-            "client_id": f"eq.{client.id}",
-            "finished_at": "not.is.null",
-        },
-    ),
-    (
-        "check_ins",
-        {
-            "select": "week_start,waist_cm,hips_cm,energy,sleep,stress,hunger",
-            "client_id": f"eq.{client.id}",
-            "status": "in.(submitted,reviewed)",
-        },
-    ),
+    # Progress page (lib/live/client.ts progressRawFor): one round of queries for the period.
+    *progress_queries(client.id),
     (
         "client_profiles",
         {
             "select": "coach_id,goal,start_date,height_cm,start_weight_kg,goal_weight_kg,check_in_day,experience,"
-            "training_days,train_location,injuries,diet,foods_to_avoid,meals_per_day",
+            "training_days,train_location,injuries,diet,foods_to_avoid,meals_per_day,phone",
             "user_id": f"eq.{client.id}",
         },
     ),
@@ -997,7 +1391,25 @@ coach_queries = [
         },
     ),
     ("client_profiles", {"select": "user_id", "user_id": f"eq.{client.id}", "coach_id": f"eq.{coach.id}"}),
-    ("client_profiles", {"select": "user_id,status,goal,start_date,setup_completed_at", "coach_id": f"eq.{coach.id}"}),
+    (
+        "client_profiles",
+        {"select": "user_id,status,goal,start_date,goal_weight_kg,setup_completed_at", "coach_id": f"eq.{coach.id}"},
+    ),
+    # Clients list flags (lib/live/manage.ts weighIns): weigh-ins for the last 12 weeks, paged.
+    (
+        "daily_logs",
+        {
+            "select": "client_id,log_date,weight_kg",
+            "client_id": f"in.({client.id})",
+            "log_date": f"gte.{today - timedelta(days=today.weekday(), weeks=11)}",
+            "weight_kg": "not.is.null",
+            "order": "client_id,log_date",
+            "offset": "0",
+            "limit": "1000",
+        },
+    ),
+    # The client's Insights card in the client view and check-in review (clientProgress).
+    *progress_queries(client.id),
     (
         "nutrition_targets",
         {
@@ -1011,6 +1423,36 @@ coach_queries = [
         {"select": "id,prompt,answer_type,position,is_active,checkin_answers(count)", "coach_id": f"eq.{coach.id}"},
     ),
     ("users", {"select": "full_name,invite_code,default_check_in_day", "id": f"eq.{coach.id}"}),
+    # Meal plans on the Nutrition page and planned vs eaten (lib/live/mealplans.ts)
+    (
+        "meal_plans",
+        {
+            "select": PLAN_COLS,
+            "client_id": f"eq.{client.id}",
+            "order": "effective_from.desc",
+        },
+    ),
+    (
+        "meal_plans",
+        {
+            "select": PLAN_COLS,
+            "coach_id": f"eq.{coach.id}",
+            "client_id": "is.null",
+        },
+    ),
+    (
+        "meal_logs",
+        {"select": "eaten_at,meal_type,calories,protein_g,carbs_g,fat_g,on_plan", "client_id": f"eq.{client.id}"},
+    ),
+    (
+        "programs",
+        {
+            "select": "start_date,weeks,workout_templates(day_of_week,removed_at)",
+            "client_id": f"eq.{client.id}",
+            "assigned_at": "not.is.null",
+        },
+    ),
+    ("client_profiles", {"select": "meals_per_day", "user_id": f"eq.{client.id}"}),
     ("check_ins", {"select": "id,week_start,status,submitted_at,reviewed_at", "client_id": f"eq.{client.id}"}),
     ("daily_logs", {"select": "log_date,weight_kg", "client_id": f"eq.{client.id}", "weight_kg": "not.is.null"}),
     ("messages", {"select": MESSAGE_COLS, "client_id": f"eq.{client.id}", "order": "created_at.desc", "limit": "300"}),

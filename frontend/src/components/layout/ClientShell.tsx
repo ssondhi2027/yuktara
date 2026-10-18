@@ -6,6 +6,7 @@ import { useUnreadMessages } from '@/features/messages/useUnreadMessages'
 import { LogoMark, Wordmark } from '@/components/ui/Logo'
 import { ProfileMenu } from './ProfileMenu'
 import './shell.css'
+import { Avatar } from '@/components/ui/Avatar'
 
 const NAV = [
   { to: '/', end: true, icon: House, short: 'Home', long: 'Home' },
@@ -57,7 +58,7 @@ export function ClientShell() {
         <div className="side-foot">
           {coach && (
             <div className="coach-card only-desktop">
-              <span className="avatar sm" style={{ background: 'var(--forest)', color: 'var(--gold)' }}>{coach.initials}</span>
+              <Avatar person={coach} size="sm" className="coach-tone" />
               <div className="grow">
                 <b className="small">{coach.first_name}</b>
                 <div className="xs muted">Your coach · replies within a day</div>

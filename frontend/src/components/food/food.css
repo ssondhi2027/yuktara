@@ -1,0 +1,52 @@
+/* Food list search, food lines and totals: shared by meal logging (client) and meal plans (coach).
+   Mobile first: everything fits at 360 px; amount and unit sit on their own row under the name. */
+.food-picker { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.food-results { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.food-results li + li { border-top: 1px solid var(--line); }
+.food-results button {
+  width: 100%; display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; padding: 10px 12px; min-height: 44px;
+  background: var(--surface); border: 0; text-align: left; color: var(--ink); font: inherit;
+}
+.food-results button:hover, .food-results button:focus-visible { background: var(--surface-2); }
+.food-own { margin-left: 6px; font-size: 10px; padding: 1px 6px; vertical-align: middle; }
+
+.fl-list { display: flex; flex-direction: column; min-width: 0; }
+.fl-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) 32px; gap: 4px 8px; align-items: center;
+  padding: 10px 0; border-bottom: 1px solid var(--line); min-width: 0;
+}
+.fl-name { font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+.fl-remove { width: 32px; height: 32px; }
+.fl-controls { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; min-width: 0; }
+.fl-amount { width: 76px; flex: none; text-align: right; }
+.fl-unit { flex: 1 1 140px; min-width: 0; max-width: 260px; }
+.fl-nutrition { flex: 1 1 100%; color: var(--ink-2); }
+@media (min-width: 520px) { .fl-nutrition { flex: 1 1 auto; text-align: right; } }
+.fl-warning { grid-column: 1 / -1; color: var(--peach-ink); background: var(--peach); border-radius: 8px; padding: 4px 8px; }
+
+.fl-totals {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; padding: 10px 12px;
+  border-radius: 12px; background: var(--surface-2);
+}
+.fl-totals b { font-size: 17px; }
+.food-search { position: relative; display: block; }
+.food-search svg { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--ink-3); }
+.food-search .input { padding-left: 36px; }
+
+/* Small forms: a food typed in by hand (client), a coach's own food, quick add */
+.custom-food { border: 1px solid var(--line); border-radius: 14px; padding: 12px; margin: 0; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.custom-food legend { padding: 0 4px; font-weight: 600; }
+.custom-grid, .quick-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.custom-grid label { display: flex; flex-direction: column; gap: 4px; font-weight: 600; }
+@media (min-width: 480px) { .custom-grid, .quick-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+
+/* Coach: meal plan editor and planned vs eaten */
+.plan-facts { display: flex; flex-wrap: wrap; gap: 4px 16px; padding: 10px 12px; border-radius: 12px; background: var(--surface-2); }
+.plan-meal { display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid var(--line); border-radius: 16px; min-width: 0; }
+.plan-vs { margin: 0; line-height: 1.5; }
+.plan-more summary { cursor: pointer; font-weight: 600; }
+.pve-table { display: flex; flex-direction: column; }
+.pve-row { display: grid; grid-template-columns: minmax(70px, 0.8fr) minmax(0, 1fr) minmax(0, 1.4fr); gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--line); align-items: start; }
+.pve-head { font-size: 12px; color: var(--ink-2); font-weight: 600; padding-top: 0; }
+.pve-total { border-bottom: 0; }
+.plan-week details summary { cursor: pointer; font-weight: 600; }
