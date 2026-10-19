@@ -1115,6 +1115,142 @@ check(any(m["meal_type"] == "snack" and m["on_plan"] == "no" for m in logged), "
 r = other.rpc("save_meal_plan", {"p": {**plan_body, "effective_from": str(today + timedelta(days=1))}})
 check(r.status_code >= 400, "a client can't write meal plans")
 
+step("Supersets and drop sets: the coach pairs two exercises; the client logs the superset and a drop; both see them")
+PROGRAM_SELECT = (
+    "id,client_id,is_template,name,weeks,goal,level,days_per_week,start_date,assigned_at,draft_start,"
+    "workout_templates(id,name,day_of_week,position,notes,removed_at,"
+    "template_exercises(id,exercise_id,position,target_sets,target_reps,target_rpe,rest_seconds,notes,superset_group,"
+    "removed_at,exercises(name)))"
+)
+prog = coach.get("programs", select=PROGRAM_SELECT, id=f"eq.{program_id}")[0]
+workouts = sorted([w for w in prog["workout_templates"] if not w["removed_at"]], key=lambda w: w["position"])
+lower = next(w for w in workouts if w["id"] == template["id"])
+lower_slots = sorted([x for x in lower["template_exercises"] if not x["removed_at"]], key=lambda x: x["position"])
+pair = lower_slots[1:3] if len(lower_slots) >= 3 else lower_slots[0:2]
+pair_ids = {x["id"] for x in pair}
+body = {
+    "id": program_id,
+    "client_id": client.id,
+    "name": prog["name"],
+    "weeks": prog["weeks"],
+    "goal": prog["goal"],
+    "level": prog["level"],
+    "draft_start": None,
+    "workouts": [
+        {
+            "id": w["id"],
+            "name": w["name"],
+            "day_of_week": w["day_of_week"],
+            "notes": w["notes"] or "",
+            "exercises": [
+                {
+                    "id": x["id"],
+                    "exercise_id": x["exercise_id"],
+                    "target_sets": x["target_sets"],
+                    "target_reps": x["target_reps"],
+                    "target_rpe": x["target_rpe"],
+                    # One rest after the round: on the last exercise of the pair.
+                    "rest_seconds": None if x["id"] == pair[0]["id"] else x["rest_seconds"],
+                    "notes": x["notes"] or "",
+                    "superset_group": "A" if x["id"] in pair_ids else None,
+                }
+                for x in sorted(
+                    [x for x in w["template_exercises"] if not x["removed_at"]], key=lambda x: x["position"]
+                )
+            ],
+        }
+        for w in workouts
+    ],
+}
+r = coach.rpc("save_program", {"p": body})
+check(r.status_code == 200, "coach links two exercises into superset A and saves the assigned program")
+mine = client.get(
+    "template_exercises", select="id,superset_group,rest_seconds", id=f"in.({','.join(pair_ids)})", order="position"
+)
+check(
+    [x["superset_group"] for x in mine] == ["A", "A"] and mine[0]["rest_seconds"] is None,
+    "the client's plan shows A1 + A2, resting after the round",
+)
+
+a1, a2 = pair[0], pair[1]
+muscles = {
+    x["exercise_id"]: [m["muscle"] for m in x["exercise_muscles"] if m["role"] == "primary"]
+    for x in client.get(
+        "exercises", select="id,exercise_muscles(muscle,role)", id=f"in.({a1['exercise_id']},{a2['exercise_id']})"
+    )
+    for x in [{"exercise_id": x["id"], "exercise_muscles": x["exercise_muscles"]}]
+}
+
+
+def body_map():
+    rows = client.rpc("muscle_sets_for_week", {"client": client.id, "week_start": monday}).json()
+    return {r["muscle"]: r["hard_sets"] for r in rows}
+
+
+before = body_map()
+ss = start_session(template["id"])
+check(ss.status_code == 201, "client starts the workout again for the superset")
+ss = ss.json()[0]["id"]
+
+
+def put(slot, n, kg, reps, drop_of=None):
+    return client.write(
+        "POST",
+        "set_logs",
+        {
+            "session_id": ss,
+            "exercise_id": slot["exercise_id"],
+            "template_exercise_id": slot["id"],
+            "set_number": n,
+            "reps": reps,
+            "weight_kg": kg,
+            "rpe": None,
+            "is_warmup": False,
+            "set_kind": "drop" if drop_of else "normal",
+            "drop_of": drop_of,
+        },
+        prefer="resolution=merge-duplicates,return=minimal",
+        on_conflict="session_id,exercise_id,set_number",
+    ).status_code
+
+
+rounds = [put(a1, 1, 40, 10), put(a2, 1, 30, 12), put(a1, 2, 40, 10), put(a2, 2, 30, 12)]
+check(all(c in (200, 201) for c in rounds), "client logs two rounds in order: A1, A2, A1, A2")
+check(
+    put(a1, 3, 30, 12, drop_of=2) in (200, 201), "client adds a drop after A1's second set (40 kg x 10 -> 30 kg x 12)"
+)
+check(put(a1, 4, 20, 15, drop_of=9) >= 400, "a drop with no working set above it is refused")
+after = body_map()
+expected = {}
+for e, k in ((a1["exercise_id"], 2), (a2["exercise_id"], 2)):  # two hard sets each; the drop isn't one
+    for m in muscles[e]:
+        expected[m] = expected.get(m, 0) + k
+check(
+    all(after.get(m, 0) == before.get(m, 0) + k for m, k in expected.items()),
+    f"the body map counts A1's set and its drop once ({', '.join(f'{m} +{k}' for m, k in expected.items())})",
+)
+r = client.write(
+    "PATCH",
+    "workout_sessions",
+    {"finished_at": f"{today}T20:30:00Z", "duration_min": 25, "status": "done", "effort": 8},
+    id=f"eq.{ss}",
+)
+check(r.status_code == 200, "client finishes the workout")
+
+SUMMARY_COLS = (
+    "id,performed_on,finished_at,duration_min,notes,effort,status,workout_templates(name),set_logs(set_number,reps,"
+    "weight_kg,rpe,is_warmup,drop_of,exercise_id,exercises(name,exercise_muscles(muscle,role)),"
+    "template_exercises(superset_group))"
+)
+for who, name in ((client, "client"), (coach, "coach")):
+    row = who.get("workout_sessions", select=SUMMARY_COLS, id=f"eq.{ss}")[0]
+    drops = [x for x in row["set_logs"] if x["drop_of"] is not None]
+    labels = {x["template_exercises"]["superset_group"] for x in row["set_logs"] if x["template_exercises"]}
+    check(
+        len(row["set_logs"]) == 5 and len(drops) == 1 and drops[0]["drop_of"] == 2 and labels == {"A"},
+        f"the {name}'s summary has the superset and the drop (4 hard sets + 1 drop)",
+    )
+
 print("\nWalkthrough passed.")
 
 step("The apps' own queries (same select strings as frontend/src/lib/live) all run under RLS")
@@ -1154,7 +1290,7 @@ def progress_queries(uid):
         (
             "workout_sessions",
             {
-                "select": "performed_on,workout_template_id,set_logs(exercise_id,reps,weight_kg,rpe,is_warmup,"
+                "select": "performed_on,workout_template_id,set_logs(exercise_id,reps,weight_kg,rpe,is_warmup,drop_of,"
                 "exercises(name,exercise_muscles(muscle,role)))",
                 "client_id": f"eq.{uid}",
                 "finished_at": "not.is.null",
@@ -1177,7 +1313,7 @@ client_queries = [
         "programs",
         {
             "select": "id,name,start_date,weeks,workout_templates(id,name,day_of_week,position,notes,"
-            "template_exercises(id,position,target_sets,target_reps,target_rpe,rest_seconds,notes,exercise_id,"
+            "template_exercises(id,position,target_sets,target_reps,target_rpe,rest_seconds,notes,superset_group,exercise_id,"
             "exercises(name,cue)))",
             "client_id": f"eq.{client.id}",
             "start_date": f"lte.{today}",
@@ -1199,12 +1335,16 @@ client_queries = [
             "select": "weight_kg,reps,exercise_id,exercises(name),workout_sessions!inner(performed_on,client_id)",
             "workout_sessions.client_id": f"eq.{client.id}",
             "is_warmup": "eq.false",
+            "set_kind": "eq.normal",
             "weight_kg": "not.is.null",
         },
     ),
     (
         "workout_sessions",
-        {"select": "id,performed_on,status,workout_template_id,set_logs(id,is_warmup)", "client_id": f"eq.{client.id}"},
+        {
+            "select": "id,performed_on,status,workout_template_id,set_logs(id,is_warmup,set_kind)",
+            "client_id": f"eq.{client.id}",
+        },
     ),
     (
         "exercise_muscles",
@@ -1219,6 +1359,8 @@ client_queries = [
             "select": "exercise_id,workout_sessions!inner(performed_on,client_id,status)",
             "workout_sessions.client_id": f"eq.{client.id}",
             "workout_sessions.performed_on": f"gte.{monday}",
+            "is_warmup": "eq.false",
+            "set_kind": "eq.normal",
         },
     ),
     ("exercises", {"select": "id,name,level,equipment,cue,created_by,exercise_muscles(muscle,role)", "order": "name"}),
@@ -1258,7 +1400,8 @@ client_queries = [
     (
         "workout_sessions",
         {
-            "select": "id,workout_template_id,performed_on,started_at,workout_templates(name),set_logs(is_warmup)",
+            "select": "id,workout_template_id,performed_on,started_at,workout_templates(name),"
+            "set_logs(is_warmup,set_kind)",
             "client_id": f"eq.{client.id}",
             "finished_at": "is.null",
         },
@@ -1267,7 +1410,7 @@ client_queries = [
         "workout_sessions",
         {
             "select": "id,workout_template_id,performed_on,started_at,finished_at,duration_min,notes,effort,"
-            "workout_templates(name),set_logs(exercise_id,template_exercise_id,set_number,reps,weight_kg,rpe,is_warmup)",
+            "workout_templates(name),set_logs(exercise_id,template_exercise_id,set_number,reps,weight_kg,rpe,is_warmup,drop_of)",
             "id": f"eq.{planned}",
         },
     ),
@@ -1275,7 +1418,7 @@ client_queries = [
     (
         "set_logs",
         {
-            "select": "exercise_id,set_number,reps,weight_kg,rpe,session_id,"
+            "select": "exercise_id,set_number,reps,weight_kg,rpe,drop_of,session_id,"
             "workout_sessions!inner(client_id,performed_on,started_at)",
             "workout_sessions.client_id": f"eq.{client.id}",
             "exercise_id": f"in.({ex['Back squat']},{ex['Goblet squat']})",
@@ -1386,7 +1529,7 @@ coach_queries = [
         {
             "select": "id,client_id,is_template,name,weeks,goal,level,days_per_week,start_date,assigned_at,draft_start,"
             "workout_templates(id,name,day_of_week,position,notes,removed_at,template_exercises(id,exercise_id,position,"
-            "target_sets,target_reps,target_rpe,rest_seconds,notes,removed_at,exercises(name)))",
+            "target_sets,target_reps,target_rpe,rest_seconds,notes,superset_group,removed_at,exercises(name)))",
             "id": f"eq.{program_id}",
         },
     ),

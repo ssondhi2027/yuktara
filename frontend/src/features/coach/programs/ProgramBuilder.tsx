@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { AlertTriangle, ArrowDown, ArrowLeftRight, ArrowUp, Plus, Trash2 } from 'lucide-react'
+import { AlertTriangle, ArrowDown, ArrowLeftRight, ArrowUp, Link2, Plus, Trash2, Unlink } from 'lucide-react'
 import { api, type LibraryExercise, type Program, type ProgramExercise, type ProgramWorkout } from '@/lib/api'
 import { addDays, shortDay, today } from '@/lib/dates'
 import { EXPERIENCE_LABEL, GOAL_LABEL, LEVEL_LABEL, LOCATION_LABEL, WEEKDAY_LABEL } from '@/lib/labels'
@@ -12,6 +12,7 @@ import { MUSCLE_GROUPS, type ExerciseLevel, type GoalType } from '@/types/db'
 import { ExercisePicker } from '@/features/client/train/ExercisePicker'
 import { ExerciseForm } from './ExerciseForm'
 import { emptyExercise } from '@/lib/exercises'
+import { linkedToNext, linkWithNext, normalizeSupersets, supersetTags, unlinkFromNext } from '@/lib/workouts'
 
 const DAY_ORDER = [1, 2, 3, 4, 5, 6, 0]
 const STATUS_LABEL = { template: 'Template', draft: 'Draft', upcoming: 'Assigned', active: 'Running', ended: 'Ended' } as const
@@ -44,6 +45,8 @@ export function ProgramBuilder({ initial }: { initial: Program }) {
     setP((cur) => {
       const next = structuredClone(cur)
       f(next)
+      // Supersets stay consecutive and labelled A, B… whatever was moved, removed or swapped.
+      for (const w of next.workouts) w.exercises = normalizeSupersets(w.exercises)
       return next
     })
     setDirty(true)
@@ -338,6 +341,7 @@ function WorkoutCard({ w, index, count, library, onChange, onMove, onRemove, onA
 }) {
   const id = `w${index}`
   const num = (v: string) => (v.trim() === '' ? null : Number(v))
+  const tags = supersetTags(w.exercises)
   return (
     <section className="card workout-card">
       <div className="workout-top">
@@ -362,9 +366,14 @@ function WorkoutCard({ w, index, count, library, onChange, onMove, onRemove, onA
         {w.exercises.map((x, xi) => {
           const e = library.get(x.exercise_id)
           const xid = `${id}-x${xi}`
+          const tag = tags[xi]
+          const linked = linkedToNext(w.exercises, xi)
+          // In a superset only the last exercise has a rest: it's taken after the round.
+          const restAfterRound = !!tag && !linked
           return (
-            <li key={x.id ?? `${xi}-${x.exercise_id}`} className="ex-row">
+            <li key={x.id ?? `${xi}-${x.exercise_id}`} className={`ex-row${tag ? ' in-superset' : ''}${linked ? ' linked' : ''}`}>
               <div className="ex-row-top">
+                {tag && <span className="ss-chip" aria-label={`Superset ${tag}`}>{tag}</span>}
                 <b className="grow truncate">{x.name}</b>
                 {e && <span className="xs muted truncate">{e.primary.map((m) => MUSCLE_LABEL[m]).join(', ')}</span>}
                 <button type="button" className="icon-btn sm" aria-label={`Swap ${x.name}`} onClick={() => onReplace(xi)}><ArrowLeftRight size={15} /></button>
@@ -381,11 +390,22 @@ function WorkoutCard({ w, index, count, library, onChange, onMove, onRemove, onA
                   onChange={(ev) => onChange((wk) => { wk.exercises[xi].reps = ev.target.value })} /></label>
                 <label htmlFor={`${xid}-rpe`}>RPE<input id={`${xid}-rpe`} className="input" type="number" min={1} max={10} step={0.5} value={x.rpe ?? ''}
                   onChange={(ev) => onChange((wk) => { wk.exercises[xi].rpe = num(ev.target.value) })} /></label>
-                <label htmlFor={`${xid}-rest`}>Rest (s)<input id={`${xid}-rest`} className="input" type="number" min={0} max={900} step={15} value={x.rest_seconds ?? ''}
-                  onChange={(ev) => onChange((wk) => { wk.exercises[xi].rest_seconds = num(ev.target.value) })} /></label>
+                {tag && linked ? (
+                  <span className="ss-norest xs muted">No rest: straight to {tags[xi + 1]}</span>
+                ) : (
+                  <label htmlFor={`${xid}-rest`}>{restAfterRound ? 'Rest after round (s)' : 'Rest (s)'}<input id={`${xid}-rest`} className="input" type="number" min={0} max={900} step={15} value={x.rest_seconds ?? ''}
+                    onChange={(ev) => onChange((wk) => { wk.exercises[xi].rest_seconds = num(ev.target.value) })} /></label>
+                )}
               </div>
               <input className="input ex-note" placeholder="Note for the client" aria-label={`${x.name} note`} maxLength={500} value={x.notes}
                 onChange={(ev) => onChange((wk) => { wk.exercises[xi].notes = ev.target.value })} />
+              {xi < w.exercises.length - 1 && (
+                <button type="button" className="btn btn-ghost btn-sm ss-link" aria-pressed={linked}
+                  aria-label={linked ? `Unlink ${x.name} from ${w.exercises[xi + 1].name}` : `Superset ${x.name} with ${w.exercises[xi + 1].name}`}
+                  onClick={() => onChange((wk) => { wk.exercises = linked ? unlinkFromNext(wk.exercises, xi) : linkWithNext(wk.exercises, xi) })}>
+                  {linked ? <><Unlink size={15} /> Unlink</> : <><Link2 size={15} /> Link with next</>}
+                </button>
+              )}
             </li>
           )
         })}

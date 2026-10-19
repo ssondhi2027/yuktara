@@ -39,6 +39,9 @@ export const bodyValue = (kg: number, u: UnitSystem) => roundTo(toUnit(kg, u), 0
 /** "71.6 kg" / "157.9 lb". */
 export const bodyWeight = (kg: number, u: UnitSystem) => `${bodyValue(kg, u)} ${unitLabel(u)}`
 
+/** The step for typing a load (the logger's weight boxes, drop suggestions): 1 lb or 0.5 kg. */
+export const LOAD_STEP: Record<UnitSystem, number> = { imperial: 1, metric: 0.5 }
+
 /** A load in the user's unit: 0.1 lb, or 0.5 kg (plate steps). */
 export const loadValue = (kg: number, u: UnitSystem) => roundTo(toUnit(kg, u), u === 'imperial' ? 0.1 : 0.5)
 

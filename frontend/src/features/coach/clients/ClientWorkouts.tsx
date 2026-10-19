@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { api, COACH_REFRESH } from '@/lib/api'
 import { monthDay, weekday } from '@/lib/dates'
 import { MUSCLE_LABEL } from '@/lib/muscles'
-import { setsLine, volumeLabel } from '@/lib/workouts'
+import { setsLine, supersetLine, volumeLabel } from '@/lib/workouts'
 import { useUnits } from '@/app/auth'
 
 /** The client's logged workouts, read-only (RLS doesn't let the coach change them). Weights in the coach's own unit. */
@@ -38,6 +38,7 @@ export function ClientWorkouts({ clientId, firstName }: { clientId: string; firs
                     {w.muscles.length > 0 && ` · ${w.muscles.map((m) => MUSCLE_LABEL[m]).join(', ')}`}
                   </div>
                 </summary>
+                {w.supersets.map((g) => <div key={g.join('+')} className="xs muted">{supersetLine(g)}</div>)}
                 <dl className="answers-list workout-detail">
                   {w.exercises.map((e) => <div key={e.name}><dt>{e.name}</dt><dd>{setsLine(e.sets, units)}</dd></div>)}
                   {w.notes && <div><dt>Note</dt><dd>{w.notes}</dd></div>}

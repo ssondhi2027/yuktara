@@ -60,6 +60,12 @@ The app's route guard (`RequireAuth` in `frontend/src/app/auth.tsx`) is only a c
    `<CODE>` is the invite code clients will type, 4–20 letters, digits or dashes (for example `NAME-7Q4K`). The coach can replace it later from the app (`POST /coach/invite-code`).
 3. Log out and log in again: the coach app opens.
 
+## Drop sets and supersets (0024_drop_sets_supersets.sql)
+
+- **Drop sets.** `set_logs.set_kind` is `normal` or `drop`; a drop has `drop_of`, the `set_number` of the working set it follows (same session and exercise). A set can have several drops, shown after it in `set_number` order. A drop needs its working set saved first, is never a warm-up, and a set with drops can't become a warm-up (`guard_drop_sets` trigger); deleting a working set deletes its drops. Existing rows are normal sets.
+- **Counting.** A working set and its drops count as one hard set: `muscle_sets_for_week` and the nightly `muscle_week_sets` view (both recreated) count `set_kind = 'normal'` only, as do best lifts and the muscle sheet. Volume counts every set, drops included; 1RM estimates and forecasts leave drops out; "Last time" shows drops after their set.
+- **Supersets.** `template_exercises.superset_group`, one or two capital letters, shared by consecutive exercises of a workout done back to back; the last one's rest is taken after the round. `save_program` and `copy_program` are replaced to keep it (the app tidies labels to A, B… before saving); the generator leaves exercises unpaired.
+
 ## Meal plans (0023_meal_plans.sql)
 
 - **What.** A coach plans each meal (breakfast, lunch, dinner, snacks, following the client's meals a day) as foods from the food list with amounts, plus a note per meal ("or swap rice for quinoa"). One plan for every day, or (`split`) separate training-day and rest-day plans; a day counts as a training day when the client's program has a workout on that weekday.

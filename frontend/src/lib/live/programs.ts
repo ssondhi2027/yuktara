@@ -8,6 +8,7 @@ import { ApiError } from '../backend'
 import { today } from '../dates'
 import { programStatus, programWeekOf } from '../programs'
 import { db, must, myId, person } from './shared'
+import { normalizeSupersets } from '../workouts'
 
 /** Turns a database function's error into a readable ApiError. */
 function check<T>(res: { data: T | null; error: PostgrestError | null }): T {
@@ -65,7 +66,7 @@ async function get(id: string): Promise<Program> {
   const r: any = must(await db().from('programs')
     .select('id, client_id, is_template, name, weeks, goal, level, days_per_week, start_date, assigned_at, draft_start,'
       + ' workout_templates(id, name, day_of_week, position, notes, removed_at,'
-      + ' template_exercises(id, exercise_id, position, target_sets, target_reps, target_rpe, rest_seconds, notes, removed_at, exercises(name)))')
+      + ' template_exercises(id, exercise_id, position, target_sets, target_reps, target_rpe, rest_seconds, notes, superset_group, removed_at, exercises(name)))')
     .eq('id', id).maybeSingle())
   if (!r) throw new ApiError(404, "That program doesn't exist (or isn't yours).")
   const t = today()
@@ -81,6 +82,7 @@ async function get(id: string): Promise<Program> {
         .map((x: any) => ({
           id: x.id, exercise_id: x.exercise_id, name: x.exercises?.name ?? 'Exercise', sets: x.target_sets, reps: x.target_reps,
           rpe: x.target_rpe == null ? null : Number(x.target_rpe), rest_seconds: x.rest_seconds, notes: x.notes ?? '',
+          superset: x.superset_group ?? null,
         })),
     }))
   return {
@@ -98,9 +100,10 @@ async function save(p: Program): Promise<{ id: string }> {
     draft_start: p.draft_start,
     workouts: p.workouts.map((w) => ({
       id: w.id, name: w.name, day_of_week: w.day_of_week, notes: w.notes,
-      exercises: w.exercises.map((x) => ({
+      // Supersets tidied before saving: consecutive, relabelled A, B… (lib/workouts.ts).
+      exercises: normalizeSupersets(w.exercises).map((x) => ({
         id: x.id, exercise_id: x.exercise_id, target_sets: x.sets, target_reps: x.reps, target_rpe: x.rpe,
-        rest_seconds: x.rest_seconds, notes: x.notes,
+        rest_seconds: x.rest_seconds, notes: x.notes, superset_group: x.superset ?? null,
       })),
     })),
   }

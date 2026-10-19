@@ -17,7 +17,7 @@ Weekly coaching for training and nutrition. Clients follow the program their coa
 | --- | --- |
 | Home `/` | The week at a glance: today's workout, food so far, habits (steps, water, sleep, morning weight), weight trend, best lifts, the coach's latest note |
 | Train `/train` | 3D body map of this week's hard sets per muscle, today's workout and the week's plan from the coach (start, or skip with a reason), recent workouts |
-| Workout `/train/workout/:id` | Log sets (weight, reps, RPE) as you go, marking warm-ups; swap an exercise for today; "last time" for each lift; resumes after a reload; "how hard was it?" (1–10) and a summary when you finish |
+| Workout `/train/workout/:id` | Log sets (weight, reps, RPE) as you go, marking warm-ups and adding drop sets; supersets shown together, round by round; swap an exercise for today; "last time" for each lift; resumes after a reload; "how hard was it?" (1–10) and a summary when you finish |
 | Food `/food` | The coach's meal plan for each meal ("Log as planned" or "Log something else"); meals logged as foods with amounts (calories and macros follow the amount) or as a quick add; totals against the coach's targets, "on plan?" rating, upcoming targets ("From Mon, Oct 19") |
 | Check-in `/check-in` | The weekly check-in: weight, waist and hips, scores, photos, wins and struggles, the coach's own questions. Past check-ins at `/check-in/:id` |
 | Progress `/progress` | KPIs and charts for 4 weeks, 12 weeks or since start: weight with goal and a forecast range, workouts, volume, muscles, estimated 1RM (RPE-aware, smoothed, with a forecast), calories, protein, habits, check-in measurements and scores; an Insights card with the goal date (an estimate), plateaus and up to three patterns |
@@ -31,7 +31,7 @@ Weekly coaching for training and nutrition. Clients follow the program their coa
 | Dashboard `/coach` | Every client this week, the review queue, who needs attention, the invite code |
 | Check-ins `/coach/check-ins/:id` | Review a client's check-in with charts and photos, the meal plan vs what was eaten, reply, set new targets, apply a swap |
 | Clients `/coach/clients` | Search, filter and sort clients; plateau and goal-date flags on each row; a full view with status (pause, archive), check-in day, the client's Insights card, weight trend, check-in history, meal plan vs eaten, workouts (with effort scores and skips), phone and setup answers, and private notes |
-| Programs `/coach/programs` | Generate a program from the client's answers, edit it in the builder, assign it, save and reuse templates; add your own exercises (Exercises tab) |
+| Programs `/coach/programs` | Generate a program from the client's answers, edit it in the builder (including supersets), assign it, save and reuse templates; add your own exercises (Exercises tab) |
 | Nutrition plans `/coach/nutrition` | Each client's targets and meal plan (foods and amounts per meal, against the targets, with the client's diet and foods to avoid), from today or a later date, version history and templates; add your own foods |
 | Messages `/coach/messages` | Conversations with every client, unread counts |
 | Settings `/coach/settings` | Profile photo, name, invite code (copy, rotate), weekly check-in questions, default check-in day, units |
@@ -143,7 +143,7 @@ npx supabase db reset       # applies every migration and seed.sql (the exercise
 npx supabase db push        # applies migrations to the linked project
 ```
 
-Migrations live in `supabase/migrations` (`0001`–`0023`). Never edit one that has been applied; add the next number. What each one adds is in [docs/schema.md](docs/schema.md).
+Migrations live in `supabase/migrations` (`0001`–`0024`). Never edit one that has been applied; add the next number. What each one adds is in [docs/schema.md](docs/schema.md).
 
 ## Tests and checks
 
@@ -154,7 +154,7 @@ make lint            # ruff (check and format) + TypeScript typecheck
 make walkthrough     # the whole flow on the local stack, as real users (needs `make dev` running)
 ```
 
-- **Frontend:** `npm run typecheck`, `npm test` (Node's built-in test runner: program generator, units, targets, progress calculations, forecasts and insight rules, profile and exercise checks, food amounts and meal plans, skipped workouts), `npm run build`, and `npm run check:progress` (renders the Progress page in Node for phone, tablet and desktop, in kg and lb).
+- **Frontend:** `npm run typecheck`, `npm test` (Node's built-in test runner: program generator, units, targets, progress calculations, forecasts and insight rules, profile and exercise checks, food amounts and meal plans, skipped workouts, drop sets and supersets), `npm run build`, and `npm run check:progress` (renders the Progress page in Node for phone, tablet and desktop, in kg and lb).
 - **Walkthrough** (`backend/scripts/walkthrough.py`): sign-up and confirmation, setup, targets, logging, units, coach pages, check-in and review, a generated program and logged workouts, messages, and every query the apps make, all under RLS.
 
 CI (`.github/workflows/ci.yml`) runs the frontend checks, the backend lint and tests, the database tests and dependency audits on every pull request.

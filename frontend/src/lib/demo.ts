@@ -14,7 +14,7 @@ import type { ClientStatus, DietType, ExerciseLevel as Level, GoalType, TrainLoc
 import { addDays, pinToday } from './dates'
 import { bodyWeight } from './units'
 import { ApiError } from './backend'
-import { minutesSince, OWN_WORKOUT, summarize, weekPlan, type PlanTemplate } from './workouts'
+import { inSetOrder, minutesSince, OWN_WORKOUT, summarize, weekPlan, type PlanTemplate } from './workouts'
 import { generateProgram } from './programGen'
 import { mondayOf, plusDays, progressFrom, type Period, type ProgressDetail, type ProgressRaw } from './progress'
 import { weightSignals } from './forecast'
@@ -224,8 +224,8 @@ const templates: PlanTemplate[] = [
     slot('Incline dumbbell press', 3, '10'), slot('Single-arm dumbbell row', 3, '10'), slot('Lateral raise', 3, '15', 9, 60), slot('Dumbbell curl', 3, '12', 9, 60),
   ] },
   { id: 'wt-full-c', name: 'Full body C', day_of_week: 0, notes: 'Keep the RDLs light: lower back first.', exercises: [
-    slot('Back squat', 4, '6', 8, 180), slot('Romanian deadlift', 3, '8', 7, 120), slot('Dumbbell bench press', 3, '10'),
-    slot('Seated cable row', 3, '12'), slot('Walking lunge', 3, '10', 8, 60), slot('Plank', 3, '45', null, 45),
+    slot('Back squat', 4, '6', 8, 180), slot('Romanian deadlift', 3, '8', 7, 120), { ...slot('Dumbbell bench press', 3, '10', 8, null), superset: 'A' },
+    { ...slot('Seated cable row', 3, '12'), superset: 'A' }, slot('Walking lunge', 3, '10', 8, 60), slot('Plank', 3, '45', null, 45),
   ] },
 ]
 
@@ -243,7 +243,9 @@ const [upperA, lowerA, , fullC] = templates
 const sessions = new Map<string, DemoSession>([
   ['w-prev-c', { id: 'w-prev-c', template_id: fullC.id, performed_on: '2026-09-27', started_at: '2026-09-27T17:30:00', finished_at: '2026-09-27T18:24:00', duration_min: 54, notes: '', sets: [
     ...logged(fullC, 0, [[80, 6, 8], [80, 6, 8], [80, 6, 8.5], [80, 5, 9]]), ...logged(fullC, 1, [[67.5, 8, 7], [67.5, 8, 7], [67.5, 8, 7.5]]),
-    ...logged(fullC, 2, [[16, 10, 8], [16, 10, 8], [16, 9, 9]]), ...logged(fullC, 3, [[42.5, 12, 8], [42.5, 12, 8], [42.5, 11, 9]]),
+    // Bench press with a drop after the last set (16 kg × 9 → 12 kg × 10).
+    ...logged(fullC, 2, [[16, 10, 8], [16, 10, 8], [16, 9, 9]]), { ...logged(fullC, 2, [[12, 10, null]])[0], set_number: 4, drop_of: 3 },
+    ...logged(fullC, 3, [[42.5, 12, 8], [42.5, 12, 8], [42.5, 11, 9]]),
     ...logged(fullC, 4, [[12, 10, 8], [12, 10, 8], [12, 10, 8]]), ...logged(fullC, 5, [[null, 45, null], [null, 45, null], [null, 40, null]]),
   ] }],
   ['w-upper-a', { id: 'w-upper-a', template_id: upperA.id, performed_on: '2026-09-28', started_at: '2026-09-28T07:05:00', finished_at: '2026-09-28T07:52:00', duration_min: 47, notes: '', sets: [
@@ -267,7 +269,8 @@ function sessionSummary(s: DemoSession): WorkoutSummary {
     { id: s.id, name: sessionName(s), performed_on: s.performed_on, finished: s.finished_at != null, duration_min: s.duration_min, notes: s.notes || null, effort: s.effort ?? null, skipped: !!s.skipped },
     s.sets.filter((x) => !x.is_warmup).map((x) => {
       const e = exerciseById.get(x.exercise_id)
-      return { ...x, name: e?.name ?? 'Exercise', primary: e?.primary ?? [] }
+      const slotOf = s.template_id ? planWorkout(s.template_id)?.exercises.find((p) => p.template_exercise_id === x.template_exercise_id) : undefined
+      return { ...x, name: e?.name ?? 'Exercise', primary: e?.primary ?? [], superset: slotOf?.superset ?? null }
     }),
   )
 }
@@ -441,7 +444,7 @@ programs.set('prog-aisha', {
   level: 'intermediate', days_per_week: 4, start_date: PROGRAM_START, draft_start: null,
   workouts: templates.map((t) => ({
     id: t.id, name: t.name, day_of_week: t.day_of_week, notes: t.notes ?? '',
-    exercises: t.exercises.map((x) => ({ id: x.template_exercise_id, exercise_id: x.exercise_id, name: x.name, sets: x.sets, reps: x.reps, rpe: x.rpe, rest_seconds: x.rest_seconds, notes: x.notes ?? '' })),
+    exercises: t.exercises.map((x) => ({ id: x.template_exercise_id, exercise_id: x.exercise_id, name: x.name, sets: x.sets, reps: x.reps, rpe: x.rpe, rest_seconds: x.rest_seconds, notes: x.notes ?? '', superset: x.superset ?? null })),
   })),
 })
 for (const r of roster) {
@@ -491,7 +494,7 @@ function planOf(p: DemoProgram): PlanTemplate[] {
     id: w.id!, name: w.name, day_of_week: w.day_of_week, notes: w.notes || null,
     exercises: w.exercises.map((x): PlannedExercise => ({
       template_exercise_id: x.id!, exercise_id: x.exercise_id, name: x.name, sets: x.sets, reps: x.reps, rpe: x.rpe,
-      rest_seconds: x.rest_seconds, cue: exerciseById.get(x.exercise_id)?.cue ?? null, notes: x.notes || null,
+      rest_seconds: x.rest_seconds, cue: exerciseById.get(x.exercise_id)?.cue ?? null, notes: x.notes || null, superset: x.superset ?? null,
     })),
   }))
 }
@@ -631,7 +634,7 @@ function aishaProgressRaw(): ProgressRaw {
   const { generated, ...rest } = progressRawCache
   const logged = [...sessions.values()].filter((s) => s.finished_at && !s.skipped).map((s) => ({
     date: s.performed_on, template_id: s.template_id,
-    sets: s.sets.filter((x) => !x.is_warmup).map((x) => ({ exercise_id: x.exercise_id, name: exerciseById.get(x.exercise_id)?.name ?? 'Exercise', kg: x.weight_kg, reps: x.reps, rpe: x.rpe, primary: exerciseById.get(x.exercise_id)?.primary ?? [] })),
+    sets: s.sets.filter((x) => !x.is_warmup).map((x) => ({ exercise_id: x.exercise_id, name: exerciseById.get(x.exercise_id)?.name ?? 'Exercise', kg: x.weight_kg, reps: x.reps, rpe: x.rpe, drop: x.drop_of != null, primary: exerciseById.get(x.exercise_id)?.primary ?? [] })),
   }))
   return {
     ...rest,
@@ -744,7 +747,7 @@ export const demo = {
       days,
       week: { workouts_done: done, workouts_planned: 4, meals_on_plan: 17, meals_planned: 20, avg_protein_g: 128 },
       check_in: { status: checkin.status, minutes: 4, next_date: null },
-      workout: { ...workout, sets_done: sessions.get('w-today')?.sets.filter((x) => !x.is_warmup).length ?? workout.sets_done },
+      workout: { ...workout, sets_done: sessions.get('w-today')?.sets.filter((x) => !x.is_warmup && x.drop_of == null).length ?? workout.sets_done },
       food,
       habits: { ...habitsToday, weight_today: habitsToday.weight_today, steps_avg: 8450, water_ml_avg: 2100, sleep_avg: 6 + 50 / 60, note: 'Sleep dipped on Wednesday and Thursday.' },
       weight: {
@@ -768,7 +771,7 @@ export const demo = {
       today: TODAY, week: 6, weeks: current?.weeks ?? null, body_model: bodyModel, sets, has_program: !!current, units: demoUnits(),
       next_program: nextProgram(aisha.id),
       plan: weekPlan(current ? planOf(current) : [], all.map((s) => ({ id: s.id, workout_template_id: s.template_id, performed_on: s.performed_on, finished: s.finished_at != null, skipped: !!s.skipped, notes: s.notes })), TODAY, current?.start_date ?? PROGRAM_START),
-      open_workout: open ? { id: open.id, name: sessionName(open), performed_on: open.performed_on, started_at: open.started_at, sets_done: open.sets.filter((x) => !x.is_warmup).length } : null,
+      open_workout: open ? { id: open.id, name: sessionName(open), performed_on: open.performed_on, started_at: open.started_at, sets_done: open.sets.filter((x) => !x.is_warmup && x.drop_of == null).length } : null,
       recent: all.filter((s) => s.finished_at).sort((a, b) => b.performed_on.localeCompare(a.performed_on)).slice(0, 5).map(sessionSummary),
     }
   },
@@ -822,7 +825,7 @@ export const demo = {
     const before = [...sessions.values()].filter((s) => s.id !== sessionId).sort((a, b) => (b.started_at ?? '').localeCompare(a.started_at ?? ''))
     for (const id of exerciseIds) {
       const s = before.find((x) => x.sets.some((l) => l.exercise_id === id && !l.is_warmup))
-      if (s) out[id] = { date: s.performed_on, sets: s.sets.filter((l) => l.exercise_id === id && !l.is_warmup).map(({ set_number, weight_kg, reps, rpe }) => ({ set_number, weight_kg, reps, rpe })) }
+      if (s) out[id] = { date: s.performed_on, sets: inSetOrder(s.sets.filter((l) => l.exercise_id === id && !l.is_warmup).map(({ set_number, weight_kg, reps, rpe, drop_of }) => ({ set_number, weight_kg, reps, rpe, drop_of: drop_of ?? null }))) }
     }
     return out
   },
@@ -831,7 +834,13 @@ export const demo = {
     const s = demoSession(sessionId)
     const i = s.sets.findIndex((x) => x.exercise_id === set.exercise_id && x.set_number === set.set_number)
     // The body map counts working sets only, so a set switched to or from warm-up moves the count.
-    const counted = (x: SetWrite | undefined) => (x && !x.is_warmup ? 1 : 0)
+    if (set.drop_of != null) {
+      const head = s.sets.find((x) => x.exercise_id === set.exercise_id && x.set_number === set.drop_of)
+      if (!head || head.is_warmup || head.drop_of != null) throw new ApiError(422, 'A drop follows a working set of the same exercise. Tick that set first.')
+    }
+    if (set.is_warmup && s.sets.some((x) => x.exercise_id === set.exercise_id && x.drop_of === set.set_number)) throw new ApiError(422, 'This set has drops. Remove them first.')
+    // The body map counts hard sets: a working set and its drops once, warm-ups never.
+    const counted = (x: SetWrite | undefined) => (x && !x.is_warmup && x.drop_of == null ? 1 : 0)
     const change = counted(set) - counted(i >= 0 ? s.sets[i] : undefined)
     if (i >= 0) s.sets[i] = { ...set }
     else s.sets.push({ ...set })
@@ -842,8 +851,9 @@ export const demo = {
   deleteSet(sessionId: string, exerciseId: string, setNumber: number) {
     const s = demoSession(sessionId)
     const gone = s.sets.find((x) => x.exercise_id === exerciseId && x.set_number === setNumber)
-    s.sets = s.sets.filter((x) => x !== gone)
-    if (gone && !gone.is_warmup && s.performed_on >= WEEK_START) countSets(exerciseId, -1)
+    // Unticking a working set takes its drops with it (as the database does).
+    s.sets = s.sets.filter((x) => x !== gone && !(gone && gone.drop_of == null && x.exercise_id === exerciseId && x.drop_of === setNumber))
+    if (gone && !gone.is_warmup && gone.drop_of == null && s.performed_on >= WEEK_START) countSets(exerciseId, -1)
     return { ok: true }
   },
 
@@ -868,7 +878,7 @@ export const demo = {
   discardWorkout(id: string) {
     const s = demoSession(id)
     if (!s.finished_at) {
-      for (const x of s.sets) if (!x.is_warmup) countSets(x.exercise_id, -1)
+      for (const x of s.sets) if (!x.is_warmup && x.drop_of == null) countSets(x.exercise_id, -1)
       sessions.delete(id)
     }
     return { ok: true }

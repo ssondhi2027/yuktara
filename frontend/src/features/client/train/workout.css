@@ -82,3 +82,28 @@ button.set-n:hover { background: var(--surface-2); }
 .set-row.warmup.done { background: var(--surface-2); }
 .warmup-line { margin-top: 2px; }
 .picker-item .custom-tag { margin-left: 6px; font-size: 10px; padding: 1px 6px; vertical-align: middle; }
+
+/* Drop sets: indented under their set, lighter; "Add drop" under a ticked working set */
+.set-row.drop { margin-left: 18px; background: var(--surface-2); }
+.set-row.drop.done { background: var(--sage); }
+.set-row.drop .set-n { color: var(--ink-3); font-size: 17px; }
+.drop-actions { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: -2px 0 2px 26px; }
+.add-drop {
+  align-self: flex-start; margin: -2px 0 2px 34px; padding: 6px 10px; min-height: 32px; border-radius: 10px;
+  border: 1px dashed var(--line-strong); background: transparent; color: var(--ink-2); font-weight: 600;
+}
+@media (max-width: 380px) { .set-row.drop { margin-left: 10px; } .add-drop { margin-left: 22px; } }
+
+/* Supersets: one frame, A1/A2 tags, sets in round order */
+.superset-card { border-left: 4px solid var(--primary); display: flex; flex-direction: column; gap: 8px; }
+.ss-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 10px; }
+.ss-member + .ss-member { border-top: 1px solid var(--line); padding-top: 8px; }
+.ss-member .last-time { margin-bottom: 4px; }
+.ss-tag {
+  flex: none; min-width: 34px; height: 26px; padding: 0 6px; border-radius: 8px; display: inline-grid; place-items: center;
+  background: var(--primary); color: var(--on-primary); font-weight: 700; font-size: 13px; margin-top: 1px;
+}
+.ss-set { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.ss-round { margin-top: 6px; padding-top: 6px; border-top: 1px dashed var(--line-strong); font-weight: 700; color: var(--ink-2); text-transform: uppercase; letter-spacing: .04em; }
+.ss-row-tag { color: var(--ink-2); font-weight: 600; padding-left: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ss-note { margin: 10px 0 0; color: var(--ink-2); }

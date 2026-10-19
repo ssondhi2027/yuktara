@@ -30,7 +30,8 @@ export interface ProgressRaw {
   sessions: {
     date: string
     template_id: string | null
-    sets: { exercise_id: string; name: string; kg: number | null; reps: number | null; rpe?: number | null; primary: MuscleGroup[] }[]
+    /** working sets (warm-ups left out); `drop` marks a drop set (counts for volume, not as a hard set or for 1RM) */
+    sets: { exercise_id: string; name: string; kg: number | null; reps: number | null; rpe?: number | null; primary: MuscleGroup[]; drop?: boolean }[]
   }[]
   check_ins: { week_start: string; waist_cm: number | null; hips_cm: number | null; energy: number | null; sleep: number | null; stress: number | null; hunger: number | null }[]
 }
@@ -180,7 +181,8 @@ export function progressFrom(raw: ProgressRaw, period: Period): ProgressDetail {
   const trainingWeek = (w: string) => {
     const planned = plannedIn(raw.programs, w)
     const sets = raw.sessions.filter((x) => inWeeks(x.date, [w])).flatMap((x) => x.sets)
-    return { week: w, done: doneIn(raw.sessions, w, planned), planned, volume_kg: Math.round(volumeKg(sets)), sets: sets.length }
+    // Volume counts every set; a working set and its drops are one hard set.
+    return { week: w, done: doneIn(raw.sessions, w, planned), planned, volume_kg: Math.round(volumeKg(sets)), sets: sets.filter((st) => !st.drop).length }
   }
   const tWeeks = weeks.map(trainingWeek)
   const tPrev = previous.map(trainingWeek)
@@ -190,7 +192,7 @@ export function progressFrom(raw: ProgressRaw, period: Period): ProgressDetail {
 
   const muscleSets = new Map<MuscleGroup, number>()
   for (const x of raw.sessions.filter((x) => inWeeks(x.date, weeks))) {
-    for (const st of x.sets) for (const m of st.primary) muscleSets.set(m, (muscleSets.get(m) ?? 0) + 1)
+    for (const st of x.sets) if (!st.drop) for (const m of st.primary) muscleSets.set(m, (muscleSets.get(m) ?? 0) + 1)
   }
 
   // Strength: the three exercises with the most sessions in the period. Per
@@ -201,6 +203,7 @@ export function progressFrom(raw: ProgressRaw, period: Period): ProgressDetail {
   const bySession = new Map<string, { name: string; dates: Map<string, Omit<LiftPoint, 'smooth' | 'date'>> }>()
   for (const x of raw.sessions.filter((x) => x.date >= liftFrom && x.date <= raw.today)) {
     for (const st of x.sets) {
+      if (st.drop) continue // a drop comes after a hard set: not a fair 1RM estimate
       const est = oneRepMax(st.kg, st.reps, st.rpe)
       if (est == null) continue
       const e = bySession.get(st.exercise_id) ?? { name: st.name, dates: new Map() }

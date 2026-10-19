@@ -147,7 +147,7 @@ export const round1 = (x: number) => Math.round(x * 10) / 10
 
 /** Columns for a session plus its sets, enough for summarize(). */
 export const SESSION_SUMMARY_COLS =
-  'id, performed_on, finished_at, duration_min, notes, effort, status, workout_templates(name), set_logs(set_number, reps, weight_kg, rpe, is_warmup, exercise_id, exercises(name, exercise_muscles(muscle, role)))'
+  'id, performed_on, finished_at, duration_min, notes, effort, status, workout_templates(name), set_logs(set_number, reps, weight_kg, rpe, is_warmup, drop_of, exercise_id, exercises(name, exercise_muscles(muscle, role)), template_exercises(superset_group))'
 
 const numOrNull = (x: unknown) => (x == null ? null : Number(x))
 
@@ -163,6 +163,8 @@ export function sessionSummary(row: any): WorkoutSummary {
       reps: l.reps,
       weight_kg: numOrNull(l.weight_kg),
       rpe: numOrNull(l.rpe),
+      drop_of: l.drop_of ?? null,
+      superset: l.template_exercises?.superset_group ?? null,
     }))
   return summarize({
     id: row.id,

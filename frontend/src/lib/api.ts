@@ -203,6 +203,8 @@ export interface PlannedExercise {
   cue: string | null
   /** the coach's note for this exercise */
   notes: string | null
+  /** superset label ("A"): exercises sharing it are done back to back, resting after the round */
+  superset?: string | null
 }
 
 export type PlannedStatus = 'done' | 'in_progress' | 'today' | 'missed' | 'upcoming' | 'anytime' | 'skipped'
@@ -223,7 +225,14 @@ export interface PlannedWorkout {
 
 export interface OpenWorkout { id: string; name: string; performed_on: string; started_at: string | null; sets_done: number }
 
-export interface LoggedSet { set_number: number; weight_kg: number | null; reps: number | null; rpe: number | null }
+export interface LoggedSet {
+  set_number: number
+  weight_kg: number | null
+  reps: number | null
+  rpe: number | null
+  /** a drop set: the set_number of the working set it follows (0024) */
+  drop_of?: number | null
+}
 
 /** A set as saved: which exercise, and which planned slot it was logged against (null = added by the client). */
 export interface SetWrite extends LoggedSet {
@@ -271,6 +280,8 @@ export interface WorkoutSummary {
   effort: number | null
   /** marked skipped instead of done (no sets); `notes` holds the reason */
   skipped: boolean
+  /** exercises done as supersets, by name ([["Lateral raise", "Face pull"]]) */
+  supersets: string[][]
   exercises: { name: string; sets: LoggedSet[] }[]
 }
 
@@ -329,6 +340,8 @@ export interface ProgramExercise {
   rpe: number | null
   rest_seconds: number | null
   notes: string
+  /** superset label ("A", "B"…): consecutive exercises sharing it are a superset; null = on its own */
+  superset?: string | null
 }
 
 export interface ProgramWorkout {

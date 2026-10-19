@@ -8,7 +8,7 @@ supabase-js calls. Needs TEST_DATABASE_URL.
 from __future__ import annotations
 
 import uuid
-from datetime import date, timedelta
+from datetime import date
 
 import asyncpg
 import pytest
@@ -206,7 +206,8 @@ def test_another_coach_cannot_read(ids):
 
 
 def test_logged_sets_count_on_the_body_map_while_the_session_is_open(ids):
-    monday = date.today() - timedelta(days=date.today().weekday())
+    # The database's week (UTC), the same one the sessions below are dated in.
+    monday = admin("select date_trunc('week', current_date)::date")[0][0]
     sql = "select muscle::text, hard_sets from public.muscle_sets_for_week($1, $2)"
     before = dict((r[0], r[1]) for r in as_user(ids["client_b"], sql, ids["client_b"], monday))
     session = start(ids["client_b"])

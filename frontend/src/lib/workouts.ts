@@ -5,7 +5,7 @@
 import type { MuscleGroup, UnitSystem } from '@/types/db'
 import type { LoggedSet, PlannedExercise, PlannedWorkout, WorkoutSummary } from './api'
 import { addDays, weekStart } from './dates.ts'
-import { inputFromKg, int, kgFromInput, loadWeight, toUnit, unitLabel } from './units.ts'
+import { fromUnit, inputFromKg, int, kgFromInput, LOAD_STEP, loadWeight, roundTo, toUnit, unitLabel } from './units.ts'
 
 export interface PlanTemplate { id: string; name: string; day_of_week: number | null; notes: string | null; exercises: PlannedExercise[] }
 export interface PlanSession { id: string; workout_template_id: string | null; performed_on: string; finished: boolean; skipped?: boolean; notes?: string | null }
@@ -63,31 +63,144 @@ export function weekPlan(templates: PlanTemplate[], sessions: PlanSession[], tod
     .sort((a, b) => (a.date ?? '9999').localeCompare(b.date ?? '9999'))
 }
 
-export interface SummarySet extends LoggedSet { exercise_id: string; name: string; primary: MuscleGroup[] }
+export interface SummarySet extends LoggedSet {
+  exercise_id: string
+  name: string
+  primary: MuscleGroup[]
+  /** the planned slot's superset label, if any */
+  superset?: string | null
+}
+
+// ---------- Drop sets ----------
+
+/** Working sets in order, each followed by its drops (in the order they were logged). */
+export function inSetOrder<T extends { set_number: number; drop_of?: number | null }>(sets: T[]): T[] {
+  const heads = sets.filter((s) => s.drop_of == null).sort((a, b) => a.set_number - b.set_number)
+  const drops = sets.filter((s) => s.drop_of != null).sort((a, b) => a.set_number - b.set_number)
+  const out = heads.flatMap((h) => [h, ...drops.filter((d) => d.drop_of === h.set_number)])
+  return [...out, ...drops.filter((d) => !out.includes(d))] // a drop whose set is gone, last
+}
+
+/** Hard sets: a working set and its drops count as one. (Warm-ups are left out before this.) */
+export const hardSets = (sets: { drop_of?: number | null }[]) => sets.filter((s) => s.drop_of == null).length
+
+/** Training volume: every set, drops included (Σ weight × reps, kg). */
+export const setVolume = (sets: { weight_kg: number | null; reps: number | null }[]) => sets.reduce((a, s) => a + (s.weight_kg ?? 0) * (s.reps ?? 0), 0)
+
+/**
+ * The weight to suggest for a drop: about 22.5% less than the set above,
+ * rounded to the user's load step (0.5 kg or 1 lb), as kg. Null for bodyweight.
+ */
+export function dropSuggestionKg(kg: number | null, u: UnitSystem): number | null {
+  if (kg == null || !(kg > 0)) return null
+  const shown = roundTo(toUnit(kg * 0.775, u), LOAD_STEP[u])
+  return Math.round(fromUnit(Math.max(LOAD_STEP[u], shown), u) * 100) / 100
+}
+
+// ---------- Supersets ----------
+
+/** A, B, … Z, AA, AB … for the n-th superset of a workout. */
+export const supersetLetter = (n: number): string => (n < 26 ? String.fromCharCode(65 + n) : supersetLetter(Math.floor(n / 26) - 1) + String.fromCharCode(65 + (n % 26)))
+
+/**
+ * Tidies superset labels: consecutive exercises sharing a label form one
+ * superset; a label on its own is dropped; supersets are relabelled A, B, C… in order.
+ */
+export function normalizeSupersets<T extends { superset?: string | null }>(xs: T[]): T[] {
+  const out = xs.map((x) => ({ ...x, superset: null as string | null }))
+  let n = 0
+  for (let i = 0; i < xs.length;) {
+    let j = i
+    while (xs[i].superset && j + 1 < xs.length && xs[j + 1].superset === xs[i].superset) j++
+    if (j > i) {
+      const label = supersetLetter(n++)
+      for (let k = i; k <= j; k++) out[k].superset = label
+    }
+    i = j + 1
+  }
+  return out
+}
+
+/** Whether exercise i is in a superset with the one after it. */
+export const linkedToNext = (xs: { superset?: string | null }[], i: number) => !!xs[i]?.superset && xs[i].superset === xs[i + 1]?.superset
+
+/** Puts exercise i and the next one in the same superset (joining either one's superset). */
+export function linkWithNext<T extends { superset?: string | null }>(xs: T[], i: number): T[] {
+  if (i < 0 || i + 1 >= xs.length) return xs
+  const join = '~'
+  const a = xs[i].superset
+  const b = xs[i + 1].superset
+  const next = xs.map((x, k) => ((k === i || k === i + 1 || (a && x.superset === a) || (b && x.superset === b)) ? { ...x, superset: join } : x))
+  return normalizeSupersets(next)
+}
+
+/** Splits the superset between exercise i and the next one (a pair becomes two single exercises). */
+export function unlinkFromNext<T extends { superset?: string | null }>(xs: T[], i: number): T[] {
+  if (!linkedToNext(xs, i)) return xs
+  const label = xs[i].superset
+  const next = xs.map((x, k) => (k > i && x.superset === label ? { ...x, superset: '~' } : x))
+  return normalizeSupersets(next)
+}
+
+/** "A1", "A2", … per exercise (null when not in a superset). */
+export function supersetTags(xs: { superset?: string | null }[]): (string | null)[] {
+  const seen = new Map<string, number>()
+  return xs.map((x) => {
+    if (!x.superset) return null
+    const k = (seen.get(x.superset) ?? 0) + 1
+    seen.set(x.superset, k)
+    return `${x.superset}${k}`
+  })
+}
+
+/** Consecutive runs for display: a superset's members together, everything else on its own. */
+export function supersetBlocks<T extends { superset?: string | null }>(xs: T[]): { label: string | null; items: T[] }[] {
+  const out: { label: string | null; items: T[] }[] = []
+  for (const x of xs) {
+    const last = out[out.length - 1]
+    if (x.superset && last?.label === x.superset) last.items.push(x)
+    else out.push({ label: x.superset ?? null, items: [x] })
+  }
+  return out
+}
+
+/**
+ * A superset's sets in the order they're done: round 1 is each member's first
+ * working set (with its drops), then round 2, and so on. `members` are each
+ * member's working sets in order.
+ */
+export function roundOrder<T>(members: T[][]): { round: number; member: number; set: T }[] {
+  const rounds = Math.max(0, ...members.map((m) => m.length))
+  const out: { round: number; member: number; set: T }[] = []
+  for (let r = 0; r < rounds; r++) members.forEach((m, i) => { if (m[r] !== undefined) out.push({ round: r + 1, member: i, set: m[r] }) })
+  return out
+}
 
 export function summarize(
   s: { id: string; name: string; performed_on: string; finished: boolean; duration_min: number | null; notes: string | null; effort?: number | null; skipped?: boolean },
   sets: SummarySet[],
 ): WorkoutSummary {
-  const byExercise = new Map<string, { name: string; sets: LoggedSet[] }>()
+  const byExercise = new Map<string, { name: string; sets: LoggedSet[]; superset: string | null }>()
   const muscles = new Set<MuscleGroup>()
-  let volume = 0
   for (const x of sets) {
-    const e = byExercise.get(x.exercise_id) ?? { name: x.name, sets: [] }
-    e.sets.push({ set_number: x.set_number, weight_kg: x.weight_kg, reps: x.reps, rpe: x.rpe })
+    const e = byExercise.get(x.exercise_id) ?? { name: x.name, sets: [], superset: x.superset ?? null }
+    e.sets.push({ set_number: x.set_number, weight_kg: x.weight_kg, reps: x.reps, rpe: x.rpe, drop_of: x.drop_of ?? null })
     byExercise.set(x.exercise_id, e)
     x.primary.forEach((m) => muscles.add(m))
-    volume += (x.weight_kg ?? 0) * (x.reps ?? 0)
   }
-  for (const e of byExercise.values()) e.sets.sort((a, b) => a.set_number - b.set_number)
+  const exercises = [...byExercise.values()]
+  const groups = new Map<string, string[]>()
+  for (const e of exercises) if (e.superset) groups.set(e.superset, [...(groups.get(e.superset) ?? []), e.name])
   return {
     ...s,
     effort: s.effort ?? null,
     skipped: s.skipped ?? false,
-    sets: sets.length,
-    volume_kg: Math.round(volume * 10) / 10, // rounded for display, after any lb conversion
+    // A working set and its drops are one hard set; volume counts every set.
+    sets: hardSets(sets),
+    volume_kg: Math.round(setVolume(sets) * 10) / 10, // rounded for display, after any lb conversion
     muscles: [...muscles],
-    exercises: [...byExercise.values()],
+    exercises: exercises.map((e) => ({ name: e.name, sets: inSetOrder(e.sets) })),
+    supersets: [...groups.values()].filter((g) => g.length > 1),
   }
 }
 
@@ -110,13 +223,19 @@ export const toKg = kgFromInput
 
 export const volumeLabel = (kg: number, u: UnitSystem) => `${int(toUnit(kg, u))} ${unitLabel(u)}`
 
-/** "80 kg × 6 @8" style line for a list of sets (0.1 lb / 0.5 kg). */
+/** "80 kg × 6 @8, 60 kg × 8 → 45 kg × 8 → 30 kg × 10": each set, its drops after an arrow (0.1 lb / 0.5 kg). */
 export function setsLine(sets: LoggedSet[], u: UnitSystem): string {
-  return sets.map((s) => {
-    const w = s.weight_kg != null ? loadWeight(s.weight_kg, u) : 'BW'
-    return `${w} × ${s.reps ?? '–'}${s.rpe != null ? ` @${s.rpe}` : ''}`
-  }).join(', ')
+  const one = (s: LoggedSet) => `${s.weight_kg != null ? loadWeight(s.weight_kg, u) : 'BW'} × ${s.reps ?? '–'}${s.rpe != null ? ` @${s.rpe}` : ''}`
+  const parts: string[] = []
+  for (const s of inSetOrder(sets)) {
+    if (s.drop_of != null && parts.length) parts[parts.length - 1] += ` → ${one(s)}`
+    else parts.push(one(s))
+  }
+  return parts.join(', ')
 }
+
+/** "Superset: Lateral raise + Face pull". */
+export const supersetLine = (names: string[]) => `Superset: ${names.join(' + ')}`
 
 /** Equipment where a set may have no weight. */
 export const BODYWEIGHT = new Set(['bodyweight', 'pull-up bar', 'jump rope'])

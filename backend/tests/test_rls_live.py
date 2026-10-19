@@ -281,7 +281,8 @@ def test_review_draft_and_notes_belong_to_the_clients_coach(ids):
 
 
 def test_muscle_sets_for_week_respects_rls(ids):
-    monday = date.today() - timedelta(days=date.today().weekday())
+    # The database's week (UTC), the same one the sessions below are dated in.
+    monday = admin("select date_trunc('week', current_date)::date")[0][0]
     squat = admin("select id from public.exercises where name = 'Back squat' and created_by is null")[0][0]
     session = as_user(
         ids["client_a"],
