@@ -13,7 +13,7 @@ import type {
   AnswerType, BodyModel, CheckinStatus, ClientStatus, DietType, ExerciseLevel, GoalType, MealType, MuscleGroup, OnPlan,
   PhotoPose, SessionStatus, TrainLocation, UnitSystem, WeekStatus,
 } from '@/types/db'
-import { backend } from './backend'
+import { ApiError, backend } from './backend'
 import { demo } from './demo'
 import { liveClient } from './live/client'
 import { liveCoach } from './live/coach'
@@ -31,6 +31,9 @@ import type { ExerciseDraft } from './exercises'
 import { draftFromAnswers } from './programs'
 import { today } from './dates'
 import { isDemo } from './supabase'
+import { isGuest } from './session'
+import { guestApi } from './guest'
+import { guestStore } from './guestStore'
 
 export { ApiError } from './backend'
 export type { Period, ProgressDetail } from './progress'
@@ -745,6 +748,9 @@ export const api = {
 
   // coach pages: Clients, Nutrition plans, Settings
   coachClients: (): Promise<CoachClientRow[]> => (isDemo ? wait(demo.coachClients()) : liveManage.clients()),
+  /** A client's meals between two dates (inclusive), newest day last: the coach's check-in review (Nutrition). */
+  clientMeals: (clientId: string, from: string, to: string): Promise<Meal[]> =>
+    isDemo ? wait(demo.clientMeals(clientId, from, to)) : liveClient.clientMeals(clientId, from, to),
   /** A client's Progress numbers for their coach (same maths as the client's page), for the Insights card. */
   clientProgress: (clientId: string, period: Period): Promise<ProgressDetail> =>
     isDemo ? wait(demo.clientProgress(clientId, period)) : liveClient.clientProgress(clientId, period),
@@ -826,6 +832,37 @@ export const api = {
 export const TRAINING_KEYS = [['train'], ['client-home'], ['progress'], ['muscle'], ['checkin']] as const
 
 export type Api = typeof api
+
+// ---------- Guest mode ----------
+// A guest (no account) uses lib/guest.ts on data kept on the device, at run
+// time, in any build. Anything a guest can't use (coach, messages, check-ins,
+// programs, uploads) is refused here before it can reach Supabase or the
+// backend; the screens show "Create an account" instead.
+
+/** The guest's version of an API function: same arguments, same result (sync or async). */
+export type GuestApi = { [K in keyof Api]?: (...args: Parameters<Api[K]>) => Awaited<ReturnType<Api[K]>> | Promise<Awaited<ReturnType<Api[K]>>> }
+
+/** What a guest can't use: needs an account (and usually a coach). */
+export class GuestOnlyError extends ApiError {
+  constructor() {
+    super(403, 'Create an account to work with a coach.', 'guest_only')
+  }
+}
+
+async function runGuest<T>(f: () => T | Promise<T>): Promise<T> {
+  await guestStore.ready()
+  // A copy, like the demo API: screens can't change the stored data by accident.
+  return structuredClone(await f())
+}
+
+for (const k of Object.keys(api) as (keyof Api)[]) {
+  const real = api[k] as unknown as (...a: unknown[]) => Promise<unknown>
+  const local = guestApi[k] as ((...a: unknown[]) => unknown) | undefined
+  ;(api as unknown as Record<string, unknown>)[k] = (...a: unknown[]) => {
+    if (!isGuest()) return real(...a)
+    return local ? runGuest(() => local(...a)) : Promise.reject(new GuestOnlyError())
+  }
+}
 
 /**
  * Coach screens refetch every 30 s and when the window regains focus, so a

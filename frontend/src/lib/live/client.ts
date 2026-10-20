@@ -812,6 +812,13 @@ export async function progressRawFor(uid: string, period: Period): Promise<Progr
   }
 }
 
+/** A client's meals from `from` to `to` (inclusive), for their coach (RLS: the coach reads their clients' meals). */
+async function clientMeals(clientId: string, from: string, to: string): Promise<Meal[]> {
+  const rows = await mealsBetween(clientId, from, addDays(to, 1))
+  const urls = await signedUrls(rows.map((m) => m.photo_url).filter((p): p is string => !!p))
+  return rows.map((m) => toMeal(m, urls))
+}
+
 async function progressDetail(period: Period): Promise<ProgressDetail> {
   return progressFrom(await progressRawFor(await myId(), period), period)
 }
@@ -822,7 +829,7 @@ async function clientProgress(clientId: string, period: Period): Promise<Progres
 }
 
 export const liveClient = {
-  progressDetail, clientProgress,
+  progressDetail, clientProgress, clientMeals,
   home, trainWeek, muscle, foodDay: (date: string) => foodDay(date), rateDay, logMeal, logDaily,
   checkinDraft, saveCheckin, submitCheckin, progress, setBodyModel,
   exerciseLibrary, startWorkout, workoutLog, lastTime, saveSet, deleteSet, saveWorkoutNote, finishWorkout, discardWorkout, skipWorkout, undoSkip,

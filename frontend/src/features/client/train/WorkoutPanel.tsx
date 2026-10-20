@@ -7,6 +7,7 @@ import { monthDay, shortDay, weekday } from '@/lib/dates'
 import { MUSCLE_LABEL } from '@/lib/muscles'
 import { SKIP_REASONS, volumeLabel } from '@/lib/workouts'
 import { Sheet } from '@/components/ui/Sheet'
+import { useIsGuest } from '@/components/guest/Guest'
 
 /** Starts (or resumes) a workout and opens the logging screen. */
 function useStart() {
@@ -22,6 +23,7 @@ function useStart() {
 
 /** Today's workout: resume an open one, start today's plan, or log your own. */
 export function TodayCard({ data, compact }: { data: TrainWeek; compact: boolean }) {
+  const guest = useIsGuest()
   const { start, pending, error } = useStart()
   const open = data.open_workout
   const todays = data.plan.find((p) => p.date === data.today)
@@ -40,7 +42,7 @@ export function TodayCard({ data, compact }: { data: TrainWeek; compact: boolean
     title = todays ? `${todays.name} · ${todays.status === 'skipped' ? 'skipped' : 'done'}`
       : data.has_program ? 'Rest day'
         : data.next_program ? `${data.next_program.name} starts ${shortDay(data.next_program.start_date)}`
-          : 'Your coach is setting up your plan'
+          : guest ? 'Log a workout of your own' : 'Your coach is setting up your plan'
     action = <button className="btn btn-outline btn-lg today-own" disabled={pending} onClick={() => start(null)}>{compact ? 'Log' : 'Log a workout'}</button>
   }
 
@@ -97,6 +99,7 @@ function SkipSheet({ p, today, onClose }: { p: PlannedWorkout; today: string; on
 
 /** The rest of this week's plan (catch up on a missed day, or do another one), plus recent sessions. */
 export function WorkoutWeek({ data }: { data: TrainWeek }) {
+  const guest = useIsGuest()
   const { start, pending, error } = useStart()
   const qc = useQueryClient()
   const busy = !!data.open_workout
@@ -117,7 +120,7 @@ export function WorkoutWeek({ data }: { data: TrainWeek }) {
           <p className="small muted">
             {data.has_program ? 'No workouts planned this week.'
               : data.next_program ? `Your program starts ${shortDay(data.next_program.start_date)}.`
-                : 'Your coach is setting up your plan.'} You can still log your own workouts.
+                : guest ? 'Programs come from a coach.' : 'Your coach is setting up your plan.'} You can still log your own workouts.
           </p>
         ) : (
           <ul className="plan-list">

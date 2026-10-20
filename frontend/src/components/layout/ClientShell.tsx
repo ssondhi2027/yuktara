@@ -7,6 +7,7 @@ import { LogoMark, Wordmark } from '@/components/ui/Logo'
 import { ProfileMenu } from './ProfileMenu'
 import './shell.css'
 import { Avatar } from '@/components/ui/Avatar'
+import { GuestBanner, useIsGuest } from '@/components/guest/Guest'
 
 const NAV = [
   { to: '/', end: true, icon: House, short: 'Home', long: 'Home' },
@@ -28,6 +29,7 @@ export function ClientShell() {
   const me = data?.me
   const coach = data?.coach
   const unread = useUnreadMessages()
+  const guest = useIsGuest()
 
   return (
     <div className="shell client-shell">
@@ -73,6 +75,7 @@ export function ClientShell() {
       </aside>
 
       <main className="shell-main">
+        {guest && <GuestBanner />}
         <Outlet />
       </main>
 

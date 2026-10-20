@@ -6,6 +6,7 @@ import { useAuth } from '@/app/auth'
 import { setUnits } from '@/lib/auth'
 import type { UnitSystem } from '@/types/db'
 import { useAvatarUrl } from '@/components/ui/Avatar'
+import { GuestDeleteSheet } from '@/components/guest/Guest'
 
 /** Avatar button for the signed-in person: who they are, theme, log out. */
 export function ProfileMenu({
@@ -22,6 +23,7 @@ export function ProfileMenu({
   const ref = useRef<HTMLDivElement>(null)
   const [unitsError, setUnitsError] = useState<string | null>(null)
   const [savingUnits, setSavingUnits] = useState(false)
+  const [confirmGuest, setConfirmGuest] = useState(false)
   const photo = useAvatarUrl(user?.id)
 
   useEffect(() => {
@@ -87,11 +89,17 @@ export function ProfileMenu({
             <Settings size={16} /> {user.role === 'coach' ? 'Settings' : 'Profile and settings'}
           </button>
           <button role="menuitem" type="button" className="menu-item"
-            onClick={async () => { setOpen(false); await signOut(); navigate('/login', { replace: true }) }}>
-            <LogOut size={16} /> Log out
+            onClick={async () => {
+              setOpen(false)
+              if (user.guest) return setConfirmGuest(true)
+              await signOut()
+              navigate('/login', { replace: true })
+            }}>
+            <LogOut size={16} /> {user.guest ? 'Sign out and delete my data' : 'Log out'}
           </button>
         </div>
       )}
+      {confirmGuest && <GuestDeleteSheet onClose={() => setConfirmGuest(false)} />}
     </div>
   )
 }

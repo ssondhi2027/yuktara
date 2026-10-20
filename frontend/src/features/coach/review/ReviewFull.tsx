@@ -14,22 +14,22 @@ import { bodyValue, bodyWeight, pointsIn, unitLabel } from '@/lib/units'
 import { useUnits } from '@/app/auth'
 import { ClientSignals } from '@/features/coach/ClientSignals'
 import { FeedbackBox } from './Feedback'
+import { ReviewTabBar, ReviewTabPanel, type ReviewTab } from './ReviewTabs'
 import { CoachAnswers, StatTiles } from './ReviewCompact'
 import { EMPTY_TARGETS, TargetsForm } from '@/features/coach/clients/TargetsForm'
 import { PlanVsEaten } from '@/features/coach/PlanVsEaten'
 
-const TABS = ['check-in', 'Training', 'Nutrition', 'Progress', 'Past check-ins'] as const
 
 /** Desktop check-in review (artboard "Check-in review"). */
 export function ReviewFull({ id }: { id: string }) {
   const { data: r, error, isPending } = useQuery({ queryKey: ['review', id], queryFn: () => api.checkinReview(id), ...COACH_REFRESH })
-  const [tab, setTab] = useState<(typeof TABS)[number]>('check-in')
+  const [tab, setTab] = useState<ReviewTab>('check-in')
   if (isPending) return <PageLoading />
   if (error) return <PageError error={error} />
   return <Review r={r} tab={tab} setTab={setTab} />
 }
 
-function Review({ r, tab, setTab }: { r: CheckinReview; tab: (typeof TABS)[number]; setTab: (t: (typeof TABS)[number]) => void }) {
+function Review({ r, tab, setTab }: { r: CheckinReview; tab: ReviewTab; setTab: (t: ReviewTab) => void }) {
   const units = useUnits()
   // null = leave targets as they are; set = new targets from next Monday
   const [targets, setTargets] = useState<Targets | null>(r.targets)
@@ -62,16 +62,10 @@ function Review({ r, tab, setTab }: { r: CheckinReview; tab: (typeof TABS)[numbe
         </div>
       </header>
 
-      <nav className="tabs-line" role="tablist">
-        {TABS.map((t) => (
-          <button key={t} role="tab" aria-selected={tab === t} onClick={() => setTab(t)}>
-            {t === 'check-in' ? `Week ${r.week} check-in` : t}
-          </button>
-        ))}
-      </nav>
+      <ReviewTabBar r={r} tab={tab} onChange={setTab} />
 
       {tab !== 'check-in' ? (
-        <div className="card placeholder"><p>{tab} for {r.client.first_name} is not built yet.</p></div>
+        <ReviewTabPanel r={r} tab={tab} />
       ) : (
         <div className="review-cols">
           <div className="stack" style={{ gap: 16 }}>

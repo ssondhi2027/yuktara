@@ -2,12 +2,13 @@ import { useState } from 'react'
 import { Navigate, useLocation } from 'react-router'
 import { Eye, EyeOff } from 'lucide-react'
 import { homeFor, pathFitsRole, useAuth } from '@/app/auth'
-import { AuthError, DEMO_COACH_EMAIL, sendPasswordReset, signIn, signInWithGoogle, signUp } from '@/lib/auth'
+import { AuthError, DEMO_COACH_EMAIL, sendPasswordReset, signIn, signInWithGoogle, signUp, startGuest } from '@/lib/auth'
 import { isDemo } from '@/lib/supabase'
 import { BrandLogo } from '@/components/ui/BrandLogo'
 import { PageLoading } from '@/components/ui/Loading'
 import { ResendLink } from './ResendLink'
 import { SetupSheet } from './SetupSheet'
+import '@/components/guest/guest.css'
 import './auth.css'
 
 type Tab = 'login' | 'register'
@@ -22,7 +23,8 @@ const GOOGLE_ENABLED = import.meta.env.VITE_ENABLE_GOOGLE === 'true'
 export function AuthPage() {
   const { status, user, notice } = useAuth()
   const location = useLocation()
-  const [tab, setTab] = useState<Tab>('login')
+  const [tab, setTab] = useState<Tab>((location.state as { tab?: Tab } | null)?.tab === 'register' ? 'register' : 'login')
+  const [startingGuest, setStartingGuest] = useState(false)
   // Set right after Create account, so the sheet can say "Account created for …".
   const [justCreated, setJustCreated] = useState<{ email: string; confirm: boolean } | null>(null)
   // Keeps the sheet up for "You're all set" after setup saves and the user becomes complete.
@@ -55,6 +57,15 @@ export function AuthPage() {
         {tab === 'login'
           ? <LoginForm onRegister={() => setTab('register')} />
           : <RegisterForm onCreated={(email, confirm) => setJustCreated({ email, confirm })} onLogin={() => setTab('login')} />}
+
+        <div className="auth-guest">
+          <div className="auth-or">or</div>
+          <button type="button" className="btn btn-ghost btn-block" disabled={startingGuest}
+            onClick={async () => { setStartingGuest(true); try { await startGuest() } finally { setStartingGuest(false) } }}>
+            {startingGuest ? 'Starting…' : 'Try without an account'}
+          </button>
+          <p className="xs muted">Log meals, workouts and habits on this device. No email needed; nothing is sent anywhere.</p>
+        </div>
 
         {isDemo && (
           <div className="auth-demo xs muted">

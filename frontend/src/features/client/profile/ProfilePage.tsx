@@ -13,6 +13,7 @@ import { useAuth } from '@/app/auth'
 import { PageError, PageLoading } from '@/components/ui/Loading'
 import './profile.css'
 import { AvatarUpload } from '@/components/ui/AvatarUpload'
+import { GuestCard, GuestDeleteSheet } from '@/components/guest/Guest'
 
 /** /settings: the client's own answers (editable), what the coach controls (read-only), units and log out. */
 export function ProfilePage() {
@@ -43,6 +44,7 @@ function Profile({ p }: { p: MyProfile }) {
   })
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [saved, setSaved] = useState(false)
+  const [confirmGuest, setConfirmGuest] = useState(false)
   const set = (k: keyof Form, v: string) => { setF({ ...f, [k]: v }); setSaved(false); setErrors({ ...errors, [k]: '' }) }
 
   const save = useMutation({
@@ -146,16 +148,20 @@ function Profile({ p }: { p: MyProfile }) {
             <textarea id="p-injuries" className="textarea" rows={3} maxLength={2000} value={f.injuries} onChange={(e) => set('injuries', e.target.value)} />
           ), 'Your coach sees this when building your program.')}
           {errors.save && <div role="alert" className="auth-note err">{errors.save}</div>}
-          {saved && <div role="status" className="auth-note ok" style={{ marginTop: 0 }}>Saved. Your coach sees the changes.</div>}
+          {saved && <div role="status" className="auth-note ok" style={{ marginTop: 0 }}>{user?.guest ? 'Saved on this device.' : 'Saved. Your coach sees the changes.'}</div>}
           <button className="btn btn-primary btn-lg" style={{ alignSelf: 'flex-start' }} disabled={save.isPending}>{save.isPending ? 'Saving…' : 'Save'}</button>
         </form>
 
         <aside className="stack" style={{ gap: 16 }}>
-          <section className="card stack" style={{ gap: 10 }}>
-            <h2>Set by your coach</h2>
-            <dl className="profile-list">{coachRows.map(([k, v]) => <div key={k}><dt>{k}</dt><dd>{v}</dd></div>)}</dl>
-            <p className="xs muted">Ask your coach in Messages to change any of these.</p>
-          </section>
+          {user?.guest ? (
+            <GuestCard text="A coach sets your program, targets and meal plan, and reviews your weekly check-ins. Guests log on their own." />
+          ) : (
+            <section className="card stack" style={{ gap: 10 }}>
+              <h2>Set by your coach</h2>
+              <dl className="profile-list">{coachRows.map(([k, v]) => <div key={k}><dt>{k}</dt><dd>{v}</dd></div>)}</dl>
+              <p className="xs muted">Ask your coach in Messages to change any of these.</p>
+            </section>
+          )}
           <section className="card stack" style={{ gap: 10 }}>
             <h2>Settings</h2>
             <div className="between">
@@ -166,9 +172,14 @@ function Profile({ p }: { p: MyProfile }) {
                 ))}
               </div>
             </div>
-            <button type="button" className="btn btn-ghost" onClick={async () => { await signOut(); navigate('/login', { replace: true }) }}>
-              <LogOut size={16} /> Log out
+            <button type="button" className="btn btn-ghost" onClick={async () => {
+              if (user?.guest) return setConfirmGuest(true)
+              await signOut()
+              navigate('/login', { replace: true })
+            }}>
+              <LogOut size={16} /> {user?.guest ? 'Sign out and delete my data' : 'Log out'}
             </button>
+            {confirmGuest && <GuestDeleteSheet onClose={() => setConfirmGuest(false)} />}
           </section>
         </aside>
       </div>

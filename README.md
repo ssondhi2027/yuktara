@@ -29,7 +29,7 @@ Weekly coaching for training and nutrition. Clients follow the program their coa
 | Page | What it does |
 | --- | --- |
 | Dashboard `/coach` | Every client this week, the review queue, who needs attention, the invite code |
-| Check-ins `/coach/check-ins/:id` | Review a client's check-in with charts and photos, the meal plan vs what was eaten, reply, set new targets, apply a swap |
+| Check-ins `/coach/check-ins/:id` | Review a client's check-in with charts and photos, the meal plan vs what was eaten, reply, set new targets, apply a swap. Tabs for the client's Training (workouts vs plan, charts, every workout), Nutrition (targets, plan vs eaten, that week's meals by day), Progress (their Progress page) and Past check-ins |
 | Clients `/coach/clients` | Search, filter and sort clients; plateau and goal-date flags on each row; a full view with status (pause, archive), check-in day, the client's Insights card, weight trend, check-in history, meal plan vs eaten, workouts (with effort scores and skips), phone and setup answers, and private notes |
 | Programs `/coach/programs` | Generate a program from the client's answers, edit it in the builder (including supersets), assign it, save and reuse templates; add your own exercises (Exercises tab) |
 | Nutrition plans `/coach/nutrition` | Each client's targets and meal plan (foods and amounts per meal, against the targets, with the client's diet and foods to avoid), from today or a later date, version history and templates; add your own foods |
@@ -66,6 +66,17 @@ The app has two modes, and they never mix:
 | Accounts | `coach@demo.test` is the coach; any other email is a client; passwords aren't checked | Real sign-up with email confirmation |
 
 Sample numbers never appear in Supabase mode: a brand-new account sees empty states ("no meals yet", "waiting for your coach") until there's real data.
+
+### Guest mode (no account)
+
+"Try without an account" on the Log in page starts a guest session, in any build. A guest uses the client app on their own data, which stays on the device:
+
+- **Where:** one record, `yuktara.guest.v1`, in IndexedDB (meal and profile photos as Blobs); localStorage if IndexedDB isn't available (photos then last for the visit); memory only if the browser blocks both, and the banner says the data won't be kept. A small flag (`yuktara.guest.session`) makes a reload resume the guest session.
+- **What works:** own workouts (logger, warm-ups, drop sets), meals (food list, quick add, photos), steps, water, sleep, weight, the day rating, Home, Progress (KPIs, forecasts, insights) and Profile (units, body type, photo).
+- **What needs an account:** messages, check-ins, coach targets, meal plans, programs and the coach app; those show "Create an account to work with a coach".
+- **Never reaches the server:** `lib/api.ts` sends a guest's calls to `lib/guest.ts`; anything else is refused. The Supabase client is created lazily and refuses in a guest session, as do `backend()` and photo uploads (loudly in development).
+- **Leaving:** "Create an account" keeps the guest data on the device (try again to resume it); "Delete my data" or signing out deletes it, after a warning.
+
 
 ### Run against the local Supabase stack
 
@@ -154,7 +165,7 @@ make lint            # ruff (check and format) + TypeScript typecheck
 make walkthrough     # the whole flow on the local stack, as real users (needs `make dev` running)
 ```
 
-- **Frontend:** `npm run typecheck`, `npm test` (Node's built-in test runner: program generator, units, targets, progress calculations, forecasts and insight rules, profile and exercise checks, food amounts and meal plans, skipped workouts, drop sets and supersets), `npm run build`, and `npm run check:progress` (renders the Progress page in Node for phone, tablet and desktop, in kg and lb).
+- **Frontend:** `npm run typecheck`, `npm test` (Node's built-in test runner: program generator, units, targets, progress calculations, forecasts and insight rules, profile and exercise checks, food amounts and meal plans, skipped workouts, drop sets and supersets, the guest store), `npm run build`, `npm run check:progress` (renders the Progress page in Node for phone, tablet and desktop, in kg and lb) and `npm run check:guest` (guest mode with Supabase and the network stubbed to fail: nothing may reach them).
 - **Walkthrough** (`backend/scripts/walkthrough.py`): sign-up and confirmation, setup, targets, logging, units, coach pages, check-in and review, a generated program and logged workouts, messages, and every query the apps make, all under RLS.
 
 CI (`.github/workflows/ci.yml`) runs the frontend checks, the backend lint and tests, the database tests and dependency audits on every pull request.

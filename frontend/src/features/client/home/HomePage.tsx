@@ -16,6 +16,7 @@ import { useUnreadMessages } from '@/features/messages/useUnreadMessages'
 import { HabitSheet } from './HabitSheet'
 import './home.css'
 import { Avatar } from '@/components/ui/Avatar'
+import { GuestCard, useIsGuest } from '@/components/guest/Guest'
 
 export function ClientHomePage() {
   const { data, error, isPending } = useQuery({ queryKey: ['client-home'], queryFn: api.clientHome })
@@ -78,6 +79,7 @@ export function ClientHomePage() {
 
 /** First days only: what happens next, instead of empty numbers. */
 function Welcome({ h }: { h: ClientHome }) {
+  const guest = useIsGuest()
   const waitingOnCoach = !h.food.targets || !h.program.has_program
   if (h.program.week > 1 || !waitingOnCoach) return null
   return (
@@ -86,9 +88,11 @@ function Welcome({ h }: { h: ClientHome }) {
       <div className="grow">
         <b>{h.program.start_date === h.today ? 'Welcome to Yuktara. Today is day 1.' : 'Your first week is under way.'}</b>
         <p className="small muted">
-          {h.coach
-            ? `${h.coach.first_name} is setting up your plan and targets. Until then, log your meals, steps, water, sleep and morning weight.`
-            : "You're not linked to a coach yet. Ask your coach for their invite code. Meanwhile, log your meals and habits."}
+          {guest
+            ? "You're trying Yuktara as a guest. Log meals, workouts of your own, steps, water, sleep and weight; Progress fills in as you go."
+            : h.coach
+              ? `${h.coach.first_name} is setting up your plan and targets. Until then, log your meals, steps, water, sleep and morning weight.`
+              : "You're not linked to a coach yet. Ask your coach for their invite code. Meanwhile, log your meals and habits."}
           {h.check_in.next_date && ` Your first check-in opens ${weekday(h.check_in.next_date)}, ${monthDay(h.check_in.next_date)}.`}
         </p>
       </div>
@@ -204,6 +208,7 @@ function WeekStrip({ h, desktop }: { h: ClientHome; desktop: boolean }) {
 }
 
 function WorkoutCard({ h, compact, desktop }: { h: ClientHome; compact: boolean; desktop: boolean }) {
+  const guest = useIsGuest()
   const units = useUnits()
   const w = h.workout
   if (!w) {
@@ -221,7 +226,8 @@ function WorkoutCard({ h, compact, desktop }: { h: ClientHome; compact: boolean;
             <p className="muted small" style={{ marginTop: 6 }}>
               {h.program.next
                 ? `${h.program.next.name} starts ${weekday(h.program.next.start_date)}, ${monthDay(h.program.next.start_date)}.`
-                : h.coach ? `${h.coach.first_name} is setting up your training plan.` : 'Your coach will set up your training plan.'}
+                : guest ? 'Plans come from a coach. Log a workout of your own from Train.'
+                  : h.coach ? `${h.coach.first_name} is setting up your training plan.` : 'Your coach will set up your training plan.'}
             </p>
           </>
         )}
@@ -267,12 +273,15 @@ function WorkoutCard({ h, compact, desktop }: { h: ClientHome; compact: boolean;
 }
 
 function FoodCard({ h, compact, desktop }: { h: ClientHome; compact: boolean; desktop: boolean }) {
+  const guest = useIsGuest()
   const f = h.food
   const t = f.targets
   const sum = (k: 'calories' | 'protein_g' | 'carbs_g' | 'fat_g') => f.meals.reduce((a, m) => a + m[k], 0)
   const onPlan = f.meals.filter((m) => m.on_plan === 'yes').length
   const missing = f.planned.find((p) => !f.meals.some((m) => m.meal_type === p))
-  const waiting = !t && <p className="small muted waiting-note">Waiting for {h.coach ? h.coach.first_name : 'your coach'} to set your calorie and macro targets.</p>
+  const waiting = !t && (guest
+    ? <p className="small muted waiting-note">Calorie and macro targets come from a coach. Your totals are below.</p>
+    : <p className="small muted waiting-note">Waiting for {h.coach ? h.coach.first_name : 'your coach'} to set your calorie and macro targets.</p>)
 
   if (compact) {
     return (
@@ -367,6 +376,14 @@ function WeightCard({ h, desktop, onLog }: { h: ClientHome; desktop: boolean; on
 
 function CoachNoteCard({ h, desktop }: { h: ClientHome; desktop: boolean }) {
   const n = h.coach_note
+  const guest = useIsGuest()
+  if (guest) {
+    return (
+      <section className="card coach-note">
+        <GuestCard compact text="A coach gives you a plan, targets and feedback on weekly check-ins. Create an account and add your coach's invite code." />
+      </section>
+    )
+  }
   if (!n) {
     return (
       <section className="card dark coach-note">

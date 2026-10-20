@@ -8,6 +8,7 @@ import { bodyWeight, cmToIn, inputFromKg, int, inToCm, kgFromInput, unitLabel } 
 import { useUnits } from '@/app/auth'
 import type { PhotoPose } from '@/types/db'
 import { PageError, PageLoading } from '@/components/ui/Loading'
+import { GuestPage, useIsGuest } from '@/components/guest/Guest'
 import './checkin.css'
 
 const STEPS = ['Body', 'Feel', 'Photos', 'Notes'] as const
@@ -20,6 +21,11 @@ const SCALES = [
 ] as const
 
 export function CheckinPage() {
+  if (useIsGuest()) return <GuestPage title="Check-in" text="The weekly check-in goes to your coach, who reviews it and replies. Create an account to work with a coach." />
+  return <CheckinPageInner />
+}
+
+function CheckinPageInner() {
   const { data, error, isPending } = useQuery({ queryKey: ['checkin'], queryFn: api.checkinDraft })
   if (isPending) return <PageLoading />
   if (error) return <PageError error={error} />

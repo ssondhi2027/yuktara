@@ -1248,6 +1248,13 @@ export const demo = {
     return progressFrom(aishaProgressRaw(), period)
   },
 
+  clientMeals(clientId: string, from: string, to: string): Meal[] {
+    if (clientId !== aisha.id) return []
+    const out: Meal[] = []
+    for (let d = from; d <= to && d <= TODAY; d = addDays(d, 1)) out.push(...storedFoodDay(d).meals)
+    return out
+  },
+
   clientProgress(clientId: string, period: Period): ProgressDetail {
     const r = roster.find((x) => x.client.id === clientId)
     if (!r) throw new ApiError(404, "That client isn't one of yours.")

@@ -63,6 +63,7 @@ export function useTheme() {
       return () => listeners.delete(cb)
     },
     () => theme,
+    () => theme, // server render (checks): the same stored choice
   )
   return [value, setThemePref] as const
 }

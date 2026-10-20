@@ -3,7 +3,8 @@
 // verified token only.
 
 import { compressImage } from './image'
-import { supabase } from './supabase'
+import { assertNotGuest } from './session'
+import { getSupabase } from './supabase'
 
 const API_URL = ((import.meta.env.VITE_API_URL as string | undefined) ?? '').replace(/\/$/, '')
 
@@ -14,7 +15,8 @@ export class ApiError extends Error {
 }
 
 export async function backend<T>(path: string, body?: unknown): Promise<T> {
-  const { data: { session } } = await supabase!.auth.getSession()
+  assertNotGuest('the backend') // a guest's data never leaves the device
+  const { data: { session } } = await getSupabase().auth.getSession()
   if (!session) throw new ApiError(401, 'Your session has ended. Log in again.')
   let res: Response
   try {
@@ -42,6 +44,7 @@ interface UploadUrl { bucket: string; path: string; signed_url: string; token: s
  * storage path to save in the database.
  */
 export async function uploadPhoto(kind: 'progress' | 'meals' | 'avatar', localUrl: string): Promise<string> {
+  assertNotGuest('photo uploads')
   const blob = await (await fetch(localUrl)).blob()
   const jpeg = await compressImage(new File([blob], 'photo', { type: blob.type || 'image/jpeg' }))
   const up = await backend<UploadUrl>('/photos/upload-url', { kind, content_type: 'image/jpeg', size_bytes: jpeg.size })

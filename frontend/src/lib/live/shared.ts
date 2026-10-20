@@ -6,14 +6,12 @@ import type { MealType, MuscleGroup } from '@/types/db'
 import type { CoachNote, Person, Targets, WorkoutSummary } from '../api'
 import { ApiError } from '../backend'
 import { addDays, monthDay, parseDate, toISODate, weekStart } from '../dates'
-import { supabase } from '../supabase'
+import { getSupabase } from '../supabase'
 import { OWN_WORKOUT, summarize, type SummarySet } from '../workouts'
 import { mealsFor } from '../meals'
 
-export const db = () => {
-  if (!supabase) throw new Error('Supabase is not configured')
-  return supabase
-}
+/** The Supabase client (refuses in a guest session: lib/supabase.ts). */
+export const db = () => getSupabase()
 
 export async function myId(): Promise<string> {
   const { data: { session } } = await db().auth.getSession()

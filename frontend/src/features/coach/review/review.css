@@ -82,3 +82,25 @@
 .coach-answers > div { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; font-size: 14px; padding: 8px 12px; border-radius: 10px; background: var(--surface-2); }
 .coach-answers dt { color: var(--ink-2); }
 .coach-answers dd { margin: 0; font-weight: 600; }
+
+/* Check-in review tabs: Training, Nutrition, Progress, Past check-ins (ReviewTabs.tsx) */
+.review-compact .tabs-line { margin-bottom: 4px; gap: 18px; }
+.review-tab { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.review-tab .chart-grid.review-charts { margin: 0; }
+@media (max-width: 767px) { .review-tab .chart-grid { grid-template-columns: minmax(0, 1fr); } .review-tab .chart-grid .span-2 { grid-column: auto; } }
+.review-tab-head { gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+.review-big { font-size: 26px; margin-right: 4px; }
+.meals-week { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+.meals-day { display: flex; flex-direction: column; gap: 6px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+.meals-day:last-child { border-bottom: 0; padding-bottom: 0; }
+.meals-day-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.meals-row { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; gap: 10px; align-items: start; }
+.meals-thumb { width: 40px; height: 40px; border-radius: 10px; overflow: hidden; display: grid; place-items: center; background: var(--surface-2); color: var(--ink-3); }
+.meals-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.meal-items summary { cursor: pointer; color: var(--ink-2); }
+.meal-items ul { list-style: none; margin: 4px 0 0; padding: 0; }
+.past-checkins { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.past-row { display: flex; flex-direction: column; gap: 4px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.past-row:last-child { border-bottom: 0; }
+.past-row.current { background: var(--surface-2); margin: 0 -10px; padding: 10px; border-radius: 12px; }
+.past-facts { line-height: 1.5; }

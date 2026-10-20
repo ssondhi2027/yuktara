@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api, COACH_REFRESH, type CheckinReview } from '@/lib/api'
 import { clockTime } from '@/lib/dates'
@@ -8,11 +9,13 @@ import { PageError } from '@/components/ui/Loading'
 import { GOAL_LABEL } from '@/lib/labels'
 import { ClientSignals } from '@/features/coach/ClientSignals'
 import { FeedbackBox } from './Feedback'
+import { ReviewTabBar, ReviewTabPanel, type ReviewTab } from './ReviewTabs'
 import { PlanVsEaten } from '@/features/coach/PlanVsEaten'
 
 /** Tablet right pane and phone detail: numbers, answers, feedback. */
 export function ReviewCompact({ id }: { id: string }) {
   const { data: r, error } = useQuery({ queryKey: ['review', id], queryFn: () => api.checkinReview(id), ...COACH_REFRESH })
+  const [tab, setTab] = useState<ReviewTab>('check-in')
   if (error) return <PageError error={error} />
   if (!r) return <div className="skeleton" style={{ height: 480, margin: 24 }} />
 
@@ -29,19 +32,25 @@ export function ReviewCompact({ id }: { id: string }) {
         </div>
       </header>
 
-      <StatTiles r={r} />
+      <ReviewTabBar r={r} tab={tab} onChange={setTab} />
 
-      <ClientSignals clientId={r.client.id} className="compact-signals" />
-      <PlanVsEaten clientId={r.client.id} weekStart={r.week_start} firstName={r.client.first_name} />
+      {tab !== 'check-in' ? <ReviewTabPanel r={r} tab={tab} /> : (
+        <>
+          <StatTiles r={r} />
 
-      <div className="compact-cols">
-        <section className="card stack">
-          <Scores r={r} />
-          <hr className="rule" />
-          <Answers r={r} />
-        </section>
-        <FeedbackBox r={r} targets={r.targets} compact />
-      </div>
+          <ClientSignals clientId={r.client.id} className="compact-signals" />
+          <PlanVsEaten clientId={r.client.id} weekStart={r.week_start} firstName={r.client.first_name} />
+
+          <div className="compact-cols">
+            <section className="card stack">
+              <Scores r={r} />
+              <hr className="rule" />
+              <Answers r={r} />
+            </section>
+            <FeedbackBox r={r} targets={r.targets} compact />
+          </div>
+        </>
+      )}
     </div>
   )
 }

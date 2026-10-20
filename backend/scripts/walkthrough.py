@@ -1566,6 +1566,16 @@ coach_queries = [
         {"select": "id,prompt,answer_type,position,is_active,checkin_answers(count)", "coach_id": f"eq.{coach.id}"},
     ),
     ("users", {"select": "full_name,invite_code,default_check_in_day", "id": f"eq.{coach.id}"}),
+    # Check-in review, Nutrition tab: the client's meals that week, with their foods (lib/live/client.ts clientMeals)
+    (
+        "meal_logs",
+        {
+            "select": "id,eaten_at,meal_type,title,calories,protein_g,carbs_g,fat_g,on_plan,photo_url,"
+            "meal_items(food_id,food_name,quantity,unit,serving,calories,protein_g,carbs_g,fat_g)",
+            "client_id": f"eq.{client.id}",
+            "eaten_at": f"gte.{monday}T00:00:00Z",
+        },
+    ),
     # Meal plans on the Nutrition page and planned vs eaten (lib/live/mealplans.ts)
     (
         "meal_plans",

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { createContext, useContext, useState } from 'react'
 import { Link } from 'react-router'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { ArrowDown, ArrowRight, ArrowUp } from 'lucide-react'
@@ -58,7 +58,6 @@ export function ProgressPage() {
   const layout = useLayout()
   const units = useUnits()
   const [period, setPeriodState] = useState<Period>(savedPeriod)
-  const [section, setSection] = useState<Section>('weight')
   const setPeriod = (p: Period) => {
     setPeriodState(p)
     try { localStorage.setItem(PERIOD_KEY, p) } catch { /* per-device convenience only */ }
@@ -71,22 +70,6 @@ export function ProgressPage() {
   if (detail.error) return <PageError error={detail.error} />
   const p = head.data
   const d = detail.data
-  const phone = layout === 'phone'
-
-  const cards: Record<Section, React.ReactNode[]> = {
-    weight: phone
-      ? [<SignalsCard key="s" d={d} units={units} voice="client" />, <WeightCard key="w" d={d} units={units} big={false} />]
-      : [<WeightCard key="w" d={d} units={units} big={layout === 'desktop'} />, <SignalsCard key="s" d={d} units={units} voice="client" />],
-    training: [
-      <WorkoutsCard key="t1" d={d} />,
-      <VolumeCard key="t2" d={d} units={units} />,
-      <MusclesCard key="t3" d={d} />,
-      <StrengthCard key="t4" d={d} units={units} />,
-    ],
-    nutrition: [<CaloriesCard key="n1" d={d} />, <ProteinCard key="n2" d={d} />, <OnPlanCard key="n3" d={d} />],
-    habits: [<StepsCard key="h1" d={d} />, <WaterCard key="h2" d={d} />, <SleepCard key="h3" d={d} />],
-    checkins: [<MeasureCard key="c1" d={d} />, <ScoresCard key="c2" d={d} />],
-  }
 
   return (
     <div className={`page progress ${layout}`}>
@@ -98,8 +81,58 @@ export function ProgressPage() {
         <Segmented label="Period" value={period} onChange={setPeriod} options={PERIODS} />
       </header>
 
-      <Kpis d={d} units={units} />
+      <ProgressDashboard d={d} units={units} layout={layout} />
 
+      {p.coach_note && (
+        <section className="card dark coach-note-p">
+          <div className="row">
+            <Avatar person={p.coach_note.coach} tone="gold" />
+            <div className="grow">
+              <b>{p.coach_note.coach.first_name}, your coach</b>
+              <div className="small muted">{p.coach_note.title} · {p.coach_note.date}</div>
+            </div>
+            <Link to="/messages" className="btn btn-outline btn-square">Reply</Link>
+          </div>
+          <p style={{ fontSize: 17, lineHeight: 1.45 }}>{p.coach_note.body}</p>
+        </section>
+      )}
+    </div>
+  )
+}
+
+// ---------- The dashboard (client Progress page, coach's check-in review) ----------
+
+/** Who's reading: the client ("your coach assigns…") or their coach ("the coach assigns…"). */
+const VoiceContext = createContext<'client' | 'coach'>('client')
+export const ProgressVoice = VoiceContext.Provider
+const useVoice = () => useContext(VoiceContext)
+
+/**
+ * KPIs and chart cards for one client's ProgressDetail.
+ *  phone   — KPIs two across; one chart group at a time, Insights at the top of Weight
+ *  tablet  — KPIs three across; charts in two columns, Insights next to the weight chart
+ *  desktop — KPIs in one row; the weight chart large and Insights beside it
+ */
+export function ProgressDashboard({ d, units, layout, voice = 'client' }: { d: ProgressDetail; units: UnitSystem; layout: 'phone' | 'tablet' | 'desktop'; voice?: 'client' | 'coach' }) {
+  const [section, setSection] = useState<Section>('weight')
+  const phone = layout === 'phone'
+  const cards: Record<Section, React.ReactNode[]> = {
+    weight: phone
+      ? [<SignalsCard key="s" d={d} units={units} voice={voice} />, <WeightCard key="w" d={d} units={units} big={false} />]
+      : [<WeightCard key="w" d={d} units={units} big={layout === 'desktop'} />, <SignalsCard key="s" d={d} units={units} voice={voice} />],
+    training: [
+      <WorkoutsCard key="t1" d={d} />,
+      <VolumeCard key="t2" d={d} units={units} />,
+      <MusclesCard key="t3" d={d} />,
+      <StrengthCard key="t4" d={d} units={units} />,
+    ],
+    nutrition: [<CaloriesCard key="n1" d={d} />, <ProteinCard key="n2" d={d} />, <OnPlanCard key="n3" d={d} />],
+    habits: [<StepsCard key="h1" d={d} />, <WaterCard key="h2" d={d} />, <SleepCard key="h3" d={d} />],
+    checkins: [<MeasureCard key="c1" d={d} />, <ScoresCard key="c2" d={d} />],
+  }
+  return (
+    <VoiceContext.Provider value={voice}>
+      <Kpis d={d} units={units} />
       {phone ? (
         <>
           <div className="section-tabs">
@@ -116,21 +149,7 @@ export function ProgressPage() {
           {cards.checkins}
         </div>
       )}
-
-      {p.coach_note && (
-        <section className="card dark coach-note-p">
-          <div className="row">
-            <Avatar person={p.coach_note.coach} tone="gold" />
-            <div className="grow">
-              <b>{p.coach_note.coach.first_name}, your coach</b>
-              <div className="small muted">{p.coach_note.title} · {p.coach_note.date}</div>
-            </div>
-            <Link to="/messages" className="btn btn-outline btn-square">Reply</Link>
-          </div>
-          <p style={{ fontSize: 17, lineHeight: 1.45 }}>{p.coach_note.body}</p>
-        </section>
-      )}
-    </div>
+    </VoiceContext.Provider>
   )
 }
 
@@ -198,7 +217,7 @@ function Kpis({ d, units }: { d: ProgressDetail; units: UnitSystem }) {
 
 // ---------- Cards ----------
 
-function ChartCard({ title, sub, empty, className, children }: { title: string; sub?: string; empty?: string | null; className?: string; children?: React.ReactNode }) {
+export function ChartCard({ title, sub, empty, className, children }: { title: string; sub?: string; empty?: string | null; className?: string; children?: React.ReactNode }) {
   return (
     <section className={`card chart-card${className ? ` ${className}` : ''}`}>
       <div className="card-head"><h3>{title}</h3>{sub && <span className="small muted">{sub}</span>}</div>
@@ -207,7 +226,8 @@ function ChartCard({ title, sub, empty, className, children }: { title: string; 
   )
 }
 
-function WeightCard({ d, units, big }: { d: ProgressDetail; units: UnitSystem; big: boolean }) {
+export function WeightCard({ d, units, big }: { d: ProgressDetail; units: UnitSystem; big: boolean }) {
+  const voice = useVoice()
   const w = d.weight
   const f = w.forecast
   const u = unitLabel(units)
@@ -238,7 +258,7 @@ function WeightCard({ d, units, big }: { d: ProgressDetail; units: UnitSystem; b
   return (
     <ChartCard title="Weight" className={big ? 'span-2 tall' : undefined}
       sub={next ? `Estimate: around ${bodyWeight(next.kg, units)} by ${monthDay(next.week)}` : f.enough || !has ? 'Weekly averages' : 'Weekly averages · not enough data yet for a forecast'}
-      empty={has ? null : 'No weigh-ins in this period. Log your morning weight from Home; the trend shows up here.'}>
+      empty={has ? null : voice === 'coach' ? 'No weigh-ins in this period yet.' : 'No weigh-ins in this period. Log your morning weight from Home; the trend shows up here.'}>
       <LineChart points={points} unit={u} height={big ? 280 : 200} area={false}
         goal={w.goal_kg != null ? bodyValue(w.goal_kg, units) : undefined}
         goalLabel={w.goal_kg != null ? `Goal ${bodyWeight(w.goal_kg, units)}` : undefined}
@@ -253,11 +273,12 @@ function WeightCard({ d, units, big }: { d: ProgressDetail; units: UnitSystem; b
   )
 }
 
-function WorkoutsCard({ d }: { d: ProgressDetail }) {
+export function WorkoutsCard({ d }: { d: ProgressDetail }) {
+  const voice = useVoice()
   const t = d.training.weekly
   const any = t.some((x) => x.planned > 0 || x.done > 0)
   return (
-    <ChartCard title="Workouts" sub="Done vs planned, per week" empty={any ? null : 'No planned workouts yet. Your coach assigns your program.'}>
+    <ChartCard title="Workouts" sub="Done vs planned, per week" empty={any ? null : voice === 'coach' ? 'No planned workouts yet. Assign a program on the Programs page.' : 'No planned workouts yet. Your coach assigns your program.'}>
       <BarChart label="Workouts done and planned per week"
         items={t.map((x) => ({ label: wk(x.week), value: x.done, planned: x.planned, good: x.planned === 0 || x.done >= x.planned, tip: `Week of ${wk(x.week)}: ${x.done} of ${x.planned}` }))} />
       <Legend items={[{ name: 'Done', color: 'var(--chart)' }, { name: 'Planned', color: 'var(--line-strong)', dashed: true }]} />
@@ -265,7 +286,7 @@ function WorkoutsCard({ d }: { d: ProgressDetail }) {
   )
 }
 
-function VolumeCard({ d, units }: { d: ProgressDetail; units: UnitSystem }) {
+export function VolumeCard({ d, units }: { d: ProgressDetail; units: UnitSystem }) {
   const t = d.training.weekly
   const u = unitLabel(units)
   return (
@@ -276,7 +297,7 @@ function VolumeCard({ d, units }: { d: ProgressDetail; units: UnitSystem }) {
   )
 }
 
-function MusclesCard({ d }: { d: ProgressDetail }) {
+export function MusclesCard({ d }: { d: ProgressDetail }) {
   const top = d.training.muscles.slice(0, 8)
   const weeks = Math.max(1, d.weeks.length)
   const max = Math.max(1, ...top.map((m) => m.sets))
@@ -297,7 +318,8 @@ function MusclesCard({ d }: { d: ProgressDetail }) {
 
 const LIFT_COLORS = ['var(--chart)', 'var(--gold)', 'var(--orange)']
 
-function StrengthCard({ d, units }: { d: ProgressDetail; units: UnitSystem }) {
+export function StrengthCard({ d, units }: { d: ProgressDetail; units: UnitSystem }) {
+  const voice = useVoice()
   const lifts = d.strength
   const u = unitLabel(units)
   const ahead = d.period === 'p4' ? 4 : 8
@@ -335,7 +357,7 @@ function StrengthCard({ d, units }: { d: ProgressDetail; units: UnitSystem }) {
   })
   return (
     <ChartCard title="Strength" sub="Estimated 1-rep max, smoothed; faint dots are each session's best set" className="span-2"
-      empty={lifts.length && dates.length > 1 ? null : 'Log a few workouts with weights and your main lifts show up here.'}>
+      empty={lifts.length && dates.length > 1 ? null : voice === 'coach' ? 'Main lifts show up here after a few logged workouts with weights.' : 'Log a few workouts with weights and your main lifts show up here.'}>
       <MultiLineChart labels={dates.map((x) => monthDay(x))} positions={positions} series={series} connectGaps label="Estimated one-rep max over time, with estimates ahead"
         format={(v, s, i) => {
           if (s.faint) return null
@@ -357,7 +379,7 @@ function StrengthCard({ d, units }: { d: ProgressDetail; units: UnitSystem }) {
   )
 }
 
-function CaloriesCard({ d }: { d: ProgressDetail }) {
+export function CaloriesCard({ d }: { d: ProgressDetail }) {
   const days = d.nutrition.daily
   return (
     <ChartCard title="Calories" sub="Per day vs target" empty={days.some((x) => x.calories != null) ? null : 'No meals logged in this period.'}>
@@ -372,7 +394,7 @@ function CaloriesCard({ d }: { d: ProgressDetail }) {
   )
 }
 
-function ProteinCard({ d }: { d: ProgressDetail }) {
+export function ProteinCard({ d }: { d: ProgressDetail }) {
   const days = d.nutrition.daily
   return (
     <ChartCard title="Protein" sub="Grams per day vs target" empty={days.some((x) => x.protein_g != null) ? null : 'No meals logged in this period.'}>
@@ -385,7 +407,7 @@ function ProteinCard({ d }: { d: ProgressDetail }) {
   )
 }
 
-function OnPlanCard({ d }: { d: ProgressDetail }) {
+export function OnPlanCard({ d }: { d: ProgressDetail }) {
   const w = d.nutrition.weekly_on_plan
   return (
     <ChartCard title="Meals on plan" sub="Per week ('partly' counts half)" empty={w.some((x) => x.pct != null) ? null : 'No meals logged in this period.'}>
@@ -395,7 +417,7 @@ function OnPlanCard({ d }: { d: ProgressDetail }) {
   )
 }
 
-function StepsCard({ d }: { d: ProgressDetail }) {
+export function StepsCard({ d }: { d: ProgressDetail }) {
   return (
     <ChartCard title="Steps" sub="Per day vs target" empty={d.habits.some((x) => x.steps != null) ? null : 'No steps logged in this period.'}>
       <BarChart label="Steps per day against the target"
@@ -404,7 +426,7 @@ function StepsCard({ d }: { d: ProgressDetail }) {
   )
 }
 
-function WaterCard({ d }: { d: ProgressDetail }) {
+export function WaterCard({ d }: { d: ProgressDetail }) {
   return (
     <ChartCard title="Water" sub="Litres per day vs target" empty={d.habits.some((x) => x.water_ml != null) ? null : 'No water logged in this period.'}>
       <BarChart label="Water per day against the target" color="var(--macro-c)"
@@ -413,7 +435,7 @@ function WaterCard({ d }: { d: ProgressDetail }) {
   )
 }
 
-function SleepCard({ d }: { d: ProgressDetail }) {
+export function SleepCard({ d }: { d: ProgressDetail }) {
   return (
     <ChartCard title="Sleep" sub="Hours per night vs target" empty={d.habits.some((x) => x.sleep_h != null) ? null : 'No sleep logged in this period.'}>
       <BarChart label="Sleep per night against the target" color="var(--chart-sleep)"
@@ -422,12 +444,13 @@ function SleepCard({ d }: { d: ProgressDetail }) {
   )
 }
 
-function MeasureCard({ d }: { d: ProgressDetail }) {
+export function MeasureCard({ d }: { d: ProgressDetail }) {
+  const voice = useVoice()
   const c = d.check_ins
   const inch = (cm: number | null) => (cm == null ? null : Math.round(cmToIn(cm) * 10) / 10)
   const has = c.filter((x) => x.waist_cm != null || x.hips_cm != null).length >= 1
   return (
-    <ChartCard title="Waist and hips" sub="Inches, from your check-ins" empty={has ? null : 'Measurements from your weekly check-ins show up here.'}>
+    <ChartCard title="Waist and hips" sub={voice === 'coach' ? 'Inches, from check-ins' : 'Inches, from your check-ins'} empty={has ? null : voice === 'coach' ? 'Measurements from weekly check-ins show up here.' : 'Measurements from your weekly check-ins show up here.'}>
       <MultiLineChart labels={c.map((x) => wk(x.week_start))} label="Waist and hips per check-in" connectGaps
         series={[{ name: 'Waist', color: 'var(--chart)', values: c.map((x) => inch(x.waist_cm)) }, { name: 'Hips', color: 'var(--gold)', values: c.map((x) => inch(x.hips_cm)) }]}
         format={(v, s) => `${s.name}: ${v} in`} />
@@ -438,7 +461,8 @@ function MeasureCard({ d }: { d: ProgressDetail }) {
 
 const SCORE_COLORS = { Energy: 'var(--chart)', Sleep: 'var(--chart-sleep)', Stress: 'var(--orange)', Hunger: 'var(--gold)' }
 
-function ScoresCard({ d }: { d: ProgressDetail }) {
+export function ScoresCard({ d }: { d: ProgressDetail }) {
+  const voice = useVoice()
   const c = d.check_ins
   const has = c.some((x) => x.energy != null || x.sleep != null)
   const series = (['Energy', 'Sleep', 'Stress', 'Hunger'] as const).map((name) => ({
@@ -446,7 +470,7 @@ function ScoresCard({ d }: { d: ProgressDetail }) {
     values: c.map((x) => x[name.toLowerCase() as 'energy' | 'sleep' | 'stress' | 'hunger']),
   }))
   return (
-    <ChartCard title="How you felt" sub="Check-in scores, 1 to 5" empty={has ? null : 'Scores from your weekly check-ins show up here.'}>
+    <ChartCard title={voice === 'coach' ? 'How they felt' : 'How you felt'} sub="Check-in scores, 1 to 5" empty={has ? null : voice === 'coach' ? 'Scores from weekly check-ins show up here.' : 'Scores from your weekly check-ins show up here.'}>
       <MultiLineChart labels={c.map((x) => wk(x.week_start))} series={series} min={1} max={5} connectGaps label="Energy, sleep, stress and hunger per check-in"
         format={(v, s) => `${s.name}: ${v} of 5`} />
       <Legend items={series.map((s) => ({ name: s.name, color: s.color, dashed: s.dashed }))} />

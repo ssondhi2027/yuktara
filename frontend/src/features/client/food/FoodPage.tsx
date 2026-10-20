@@ -10,6 +10,7 @@ import type { MealType, OnPlan } from '@/types/db'
 import { MacroBar } from '@/components/ui/MacroBar'
 import { PageError, PageLoading } from '@/components/ui/Loading'
 import { MealSheet, type MealSheetMode } from './MealSheet'
+import { GuestCard, useIsGuest } from '@/components/guest/Guest'
 import './food.css'
 
 const RATING: { v: OnPlan; label: string }[] = [
@@ -94,6 +95,7 @@ function TargetNews({ day }: { day: FoodDay }) {
 }
 
 function Summary({ day, rating, onRate, isToday }: { day: FoodDay; rating: OnPlan | null; onRate: (r: OnPlan) => void; isToday: boolean }) {
+  const guest = useIsGuest()
   const t = day.targets
   const sum = (k: 'calories' | 'protein_g' | 'carbs_g' | 'fat_g') => day.meals.reduce((a, m) => a + m[k], 0)
   const kcal = sum('calories')
@@ -107,7 +109,9 @@ function Summary({ day, rating, onRate, isToday }: { day: FoodDay; rating: OnPla
             <div key={k}><div className="muted small">{{ protein_g: 'Protein', carbs_g: 'Carbs', fat_g: 'Fat' }[k]}</div><b className="num">{int(sum(k))} g</b></div>
           ))}
         </div>
-        <p className="small muted">Waiting for your coach to set your calorie and macro targets.</p>
+        {guest
+          ? <GuestCard compact title="Targets come from a coach" text="Your totals are above. Create an account and work with a coach for calorie and macro targets." />
+          : <p className="small muted">Waiting for your coach to set your calorie and macro targets.</p>}
         <TargetNews day={day} />
         <hr />
         <b>{isToday ? 'Today so far, on plan?' : 'This day, on plan?'}</b>
@@ -157,6 +161,7 @@ type OnAdd = (mode: MealSheetMode, type: MealType, photo?: File, lines?: FoodLin
  * works as before.
  */
 function MealList({ day, onAdd }: { day: FoodDay; onAdd: OnAdd }) {
+  const guest = useIsGuest()
   const onPlan = day.meals.filter((m) => m.on_plan === 'yes').length
   const plan = day.plan
   const types = ORDER.filter((t) => day.planned.includes(t) || plan?.meals.some((m) => m.meal_type === t) || day.meals.some((m) => m.meal_type === t))
@@ -171,7 +176,9 @@ function MealList({ day, onAdd }: { day: FoodDay; onAdd: OnAdd }) {
           <ClipboardList size={14} aria-hidden /> Your coach's meal plan{plan.day !== 'every' ? ` (${PLAN_DAY_LABEL[plan.day].toLowerCase().replace(/s$/, '')})` : ''}:
           {' '}{int(plan.nutrition.calories)} kcal · P {int(plan.nutrition.protein_g)} g a day
         </p>
-      ) : <p className="small muted plan-note">Your coach hasn't set a meal plan. Log what you eat as usual.</p>}
+      ) : guest
+        ? <GuestCard compact title="Meal plans come from a coach" text="Log what you eat here. A coach can plan your meals once you have an account." />
+        : <p className="small muted plan-note">Your coach hasn't set a meal plan. Log what you eat as usual.</p>}
       {types.map((t) => (
         <MealSlot key={t} type={t} planned={plan?.meals.find((m) => m.meal_type === t)} logged={day.meals.filter((m) => m.meal_type === t)} onAdd={onAdd} />
       ))}

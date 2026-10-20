@@ -1,0 +1,27 @@
+/* Guest mode: the banner at the top of the client app, and "create an account" cards. Mobile first (360 px). */
+.guest-banner {
+  display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 8px 10px; align-items: start;
+  padding: 10px 12px; margin-bottom: 14px; border-radius: 14px; background: var(--mint); color: var(--ink);
+}
+.guest-banner.warn { background: var(--peach); }
+.guest-banner-icon { color: var(--mint-ink); margin-top: 1px; }
+.guest-banner.warn .guest-banner-icon { color: var(--peach-ink); }
+.guest-banner-warn { margin-top: 4px; color: var(--peach-ink); font-weight: 600; }
+.guest-banner-actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; }
+@media (min-width: 768px) {
+  .guest-banner { grid-template-columns: 20px minmax(0, 1fr) auto; align-items: center; }
+  .guest-banner-actions { grid-column: auto; }
+}
+
+.guest-card { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 12px; align-items: start; }
+.guest-card.compact { gap: 8px; padding: 10px 12px; border-radius: 14px; background: var(--surface-2); }
+.guest-card-icon {
+  display: grid; place-items: center; width: 36px; height: 36px; border-radius: 50%;
+  background: var(--mint); color: var(--mint-ink);
+}
+.guest-card.compact .guest-card-icon { width: 28px; height: 28px; }
+.card.dark .guest-card.compact { background: transparent; padding: 0; }
+
+.auth-guest { display: flex; flex-direction: column; align-items: stretch; gap: 6px; margin-top: 4px; text-align: center; }
+.auth-or { display: flex; align-items: center; gap: 10px; color: var(--ink-3); font-size: 13px; }
+.auth-or::before, .auth-or::after { content: ''; flex: 1; border-top: 1px solid var(--line); }

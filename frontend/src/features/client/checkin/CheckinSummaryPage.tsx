@@ -6,11 +6,17 @@ import { clockTime, localDay, monthDay } from '@/lib/dates'
 import { bodyWeight, inches } from '@/lib/units'
 import { useUnits } from '@/app/auth'
 import { PageError, PageLoading } from '@/components/ui/Loading'
+import { GuestPage, useIsGuest } from '@/components/guest/Guest'
 
 const STATUS = { due: 'Open', submitted: 'Sent, waiting for feedback', reviewed: 'Reviewed', missed: 'Missed' } as const
 
 /** /check-in/:id: a past check-in as the client sent it, with the coach's feedback. Read-only. */
 export function CheckinSummaryPage() {
+  if (useIsGuest()) return <GuestPage title="Check-in" text="Check-ins are reviewed by a coach. Create an account to work with one." />
+  return <CheckinSummaryPageInner />
+}
+
+function CheckinSummaryPageInner() {
   const { id = '' } = useParams()
   const { data: c, error, isPending } = useQuery({ queryKey: ['checkin-summary', id], queryFn: () => api.checkinSummary(id) })
   const units = useUnits()

@@ -6,8 +6,10 @@
 
 import type { BodyModel, ExerciseLevel, GoalType, UnitSystem } from '@/types/db'
 import { DEMO_ACCOUNTS } from './demo'
-import { setCurrentUser } from './session'
-import { supabase } from './supabase'
+import { releaseGuestPhotos } from './guest'
+import { GUEST_ID, guestStore } from './guestStore'
+import { isGuest, setCurrentUser, setGuest } from './session'
+import { getSupabase, hasSupabase } from './supabase'
 import { lbToKg } from './units'
 
 export type Role = 'client' | 'coach'
@@ -23,6 +25,8 @@ export interface AuthUser {
   coachFirstName: string | null
   /** kg or lb for every weight shown or entered (users.unit_system) */
   units: UnitSystem
+  /** a guest session: no account, data on this device only (lib/guest.ts) */
+  guest?: boolean
 }
 
 export interface SetupAnswers {
@@ -67,7 +71,8 @@ const emit = () => listeners.forEach((l) => l())
 export function onAuthChange(cb: () => void) {
   listeners.add(cb)
   // Deferred: calling Supabase inside this callback can deadlock its auth lock.
-  const sub = supabase?.auth.onAuthStateChange(() => { setTimeout(cb, 0) })
+  // Never in a guest session: that would create the Supabase client.
+  const sub = hasSupabase && !isGuest() ? getSupabase().auth.onAuthStateChange(() => { setTimeout(cb, 0) }) : null
   return () => {
     listeners.delete(cb)
     sub?.data.subscription.unsubscribe()
@@ -139,29 +144,64 @@ const demoNeedsConfirm = (email: string) => /@unconfirmed\.test$/i.test(email.tr
 const UNCONFIRMED_MSG = 'Confirm your email first. Open the link we sent you, then log in.'
 const demoClient = () => toUser({ ...DEMO_ACCOUNTS.client, role: 'client', setupDone: true, coachFirstName: DEMO_ACCOUNTS.coach.full_name.split(' ')[0] })
 
+// ---------- Guest sessions (lib/guest.ts) ----------
+// A local client account: no email, no Supabase, data in this browser only.
+
+async function guestUser(): Promise<AuthUser> {
+  await guestStore.ready()
+  const p = guestStore.state.profile
+  return toUser({ id: GUEST_ID, email: '', full_name: p.full_name, role: 'client', setupDone: true, coachFirstName: null, units: p.units, guest: true })
+}
+
+/** "Try without an account": starts (or resumes) a guest session on this device. */
+export async function startGuest() {
+  setGuest(true)
+  await guestStore.ready()
+  emit()
+}
+
+/** Leaves guest mode but keeps the guest's data on the device (e.g. to create an account). */
+export function leaveGuest() {
+  setGuest(false)
+  setCurrentUser(null)
+  emit()
+}
+
+/** Ends the guest session and deletes everything it saved on this device. */
+export async function deleteGuest() {
+  releaseGuestPhotos()
+  await guestStore.clear()
+  leaveGuest()
+}
+
 // ---------- API ----------
 export async function loadUser(): Promise<AuthUser | null> {
-  if (!supabase) {
+  if (isGuest()) {
+    const u = await guestUser()
+    setCurrentUser(u)
+    return u
+  }
+  if (!hasSupabase) {
     const u = demoRead()
     setCurrentUser(u)
     return u
   }
-  const { data: { session } } = await supabase.auth.getSession()
+  const { data: { session } } = await getSupabase().auth.getSession()
   if (!session) {
     setCurrentUser(null)
     return null
   }
   const uid = session.user.id
-  const { data: u, error } = await supabase.from('users').select('id, email, full_name, role, unit_system').eq('id', uid).single()
+  const { data: u, error } = await getSupabase().from('users').select('id, email, full_name, role, unit_system').eq('id', uid).single()
   if (error) throw error
 
   let setupDone = true
   let coachFirstName: string | null = null
   if (u.role === 'client') {
-    const { data: p } = await supabase.from('client_profiles').select('coach_id, setup_completed_at').eq('user_id', uid).maybeSingle()
+    const { data: p } = await getSupabase().from('client_profiles').select('coach_id, setup_completed_at').eq('user_id', uid).maybeSingle()
     setupDone = !!p?.setup_completed_at
     if (p?.coach_id) {
-      const { data: c } = await supabase.from('users').select('full_name').eq('id', p.coach_id).maybeSingle()
+      const { data: c } = await getSupabase().from('users').select('full_name').eq('id', p.coach_id).maybeSingle()
       coachFirstName = c?.full_name?.split(' ')[0] ?? null
     }
     const pending = readPending()
@@ -178,7 +218,13 @@ export async function loadUser(): Promise<AuthUser | null> {
 
 /** Saves the kg/lb choice to the user's own row (RLS: users update themselves), then reloads the user. */
 export async function setUnits(units: UnitSystem) {
-  if (!supabase) {
+  if (isGuest()) {
+    await guestStore.ready()
+    guestStore.update((st) => { st.profile.units = units })
+    emit()
+    return
+  }
+  if (!hasSupabase) {
     try {
       localStorage.setItem(DEMO_UNITS_KEY, units)
     } catch {
@@ -187,15 +233,15 @@ export async function setUnits(units: UnitSystem) {
     emit()
     return
   }
-  const { data: { session } } = await supabase.auth.getSession()
+  const { data: { session } } = await getSupabase().auth.getSession()
   if (!session) throw new AuthError('other', 'Your session has ended. Log in again.')
-  const { error } = await supabase.from('users').update({ unit_system: units }).eq('id', session.user.id)
+  const { error } = await getSupabase().from('users').update({ unit_system: units }).eq('id', session.user.id)
   if (error) throw error
   emit()
 }
 
 export async function signIn(email: string, password: string) {
-  if (!supabase) {
+  if (!hasSupabase) {
     await pause(500)
     if (demoNeedsConfirm(email)) throw new AuthError('unconfirmed', UNCONFIRMED_MSG)
     if (isDemoCoach(email)) return demoWrite(demoCoach())
@@ -203,7 +249,7 @@ export async function signIn(email: string, password: string) {
     demoWrite(existing && existing.role === 'client' && existing.email.toLowerCase() === email.trim().toLowerCase() ? existing : demoClient())
     return
   }
-  const { error } = await supabase.auth.signInWithPassword({ email, password })
+  const { error } = await getSupabase().auth.signInWithPassword({ email, password })
   if (error) {
     // Supabase: "Email not confirmed" (code email_not_confirmed).
     if (error.code === 'email_not_confirmed' || /confirm/i.test(error.message)) throw new AuthError('unconfirmed', UNCONFIRMED_MSG)
@@ -213,25 +259,25 @@ export async function signIn(email: string, password: string) {
 }
 
 export async function signInWithGoogle() {
-  if (!supabase) {
+  if (!hasSupabase) {
     await pause(400)
     demoWrite(demoClient())
     return
   }
-  const { error } = await supabase.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: redirectTo() } })
+  const { error } = await getSupabase().auth.signInWithOAuth({ provider: 'google', options: { redirectTo: redirectTo() } })
   if (error) throw new AuthError('other', error.message)
 }
 
 export async function sendPasswordReset(email: string) {
-  if (!supabase) return pause(400)
-  const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: redirectTo() })
+  if (!hasSupabase) return pause(400)
+  const { error } = await getSupabase().auth.resetPasswordForEmail(email, { redirectTo: redirectTo() })
   if (error) throw new AuthError('other', error.message)
 }
 
 /** Sends the sign-up confirmation link again. */
 export async function resendConfirmation(email: string) {
-  if (!supabase) return pause(600)
-  const { error } = await supabase.auth.resend({ type: 'signup', email, options: { emailRedirectTo: redirectTo() } })
+  if (!hasSupabase) return pause(600)
+  const { error } = await getSupabase().auth.resend({ type: 'signup', email, options: { emailRedirectTo: redirectTo() } })
   if (error) {
     if (error.status === 429 || /rate limit|security purposes/i.test(error.message)) {
       throw new AuthError('other', 'Too many emails just now. Wait a minute, then try again.')
@@ -304,11 +350,11 @@ async function readAuthRedirect(): Promise<RedirectNotice | null> {
   let notice: RedirectNotice | null = null
   if (p.error || p.error_code || p.error_description) {
     notice = { tone: 'err', text: linkErrorText(p), offerResend: true }
-  } else if (supabase) {
+  } else if (hasSupabase && !isGuest()) {
     // Resolves after supabase-js has finished reading the URL.
-    let { data: { session } } = await supabase.auth.getSession()
+    let { data: { session } } = await getSupabase().auth.getSession()
     if (!session && p.code) {
-      const { data, error } = await supabase.auth.exchangeCodeForSession(p.code)
+      const { data, error } = await getSupabase().auth.exchangeCodeForSession(p.code)
       session = data.session
       // Opened in another browser: the email is confirmed but this browser
       // can't finish the sign-in, so ask for a normal log-in.
@@ -323,7 +369,7 @@ async function readAuthRedirect(): Promise<RedirectNotice | null> {
 /** Returns 'signed_in', or 'confirm_email' when Supabase wants the address confirmed first. */
 export async function signUp(input: { name: string; email: string; password: string; invite: string }): Promise<'signed_in' | 'confirm_email'> {
   const invite = input.invite.trim().toUpperCase()
-  if (!supabase) {
+  if (!hasSupabase) {
     await pause(900)
     if (/^taken@/i.test(input.email) || isDemoCoach(input.email)) throw new AuthError('exists', 'That email already has an account.')
     if (invite && invite !== DEMO_ACCOUNTS.invite_code) throw new AuthError('invite', "We couldn't find that invite code. Check it with your coach.")
@@ -336,11 +382,11 @@ export async function signUp(input: { name: string; email: string; password: str
   }
 
   if (invite) {
-    const { data: ok, error } = await supabase.rpc('invite_code_valid', { code: invite })
+    const { data: ok, error } = await getSupabase().rpc('invite_code_valid', { code: invite })
     if (error) throw new AuthError('other', error.message)
     if (!ok) throw new AuthError('invite', "We couldn't find that invite code. Check it with your coach.")
   }
-  const { data, error } = await supabase.auth.signUp({
+  const { data, error } = await getSupabase().auth.signUp({
     email: input.email,
     password: input.password,
     options: {
@@ -363,7 +409,7 @@ export async function signUp(input: { name: string; email: string; password: str
 
 /** Returns 'saved', or 'pending' when the answers wait for email confirmation. */
 export async function completeSetup(answers: SetupAnswers, email: string): Promise<'saved' | 'pending'> {
-  if (!supabase) {
+  if (!hasSupabase) {
     await pause(700)
     const u = demoRead()
     if (!u) {
@@ -378,7 +424,7 @@ export async function completeSetup(answers: SetupAnswers, email: string): Promi
     demoWrite({ ...u, setupDone: true, units: answers.units })
     return 'saved'
   }
-  const { data: { session } } = await supabase.auth.getSession()
+  const { data: { session } } = await getSupabase().auth.getSession()
   if (!session) {
     writePending({ email, answers })
     return 'pending'
@@ -389,7 +435,7 @@ export async function completeSetup(answers: SetupAnswers, email: string): Promi
 }
 
 async function saveSetup(uid: string, a: SetupAnswers) {
-  const db = supabase!
+  const db = getSupabase()
   const imperial = a.units === 'imperial'
   const num = (v: string) => (v.trim() === '' ? null : Number(v))
   const kg = (v: string) => { const n = num(v); return n == null ? null : +(imperial ? lbToKg(n) : n).toFixed(2) }
@@ -426,8 +472,10 @@ async function saveSetup(uid: string, a: SetupAnswers) {
   }
 }
 
+/** Signing out of a guest session deletes its data (the UI warns first). */
 export async function signOut() {
-  if (!supabase) return demoWrite(null)
-  await supabase.auth.signOut()
+  if (isGuest()) return deleteGuest()
+  if (!hasSupabase) return demoWrite(null)
+  await getSupabase().auth.signOut()
   emit()
 }
