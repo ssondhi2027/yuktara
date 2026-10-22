@@ -71,3 +71,6 @@
 }
 .ss-norest { align-self: end; padding-bottom: 12px; }
 .ss-link { align-self: flex-start; margin-top: 6px; }
+
+/* A cardio slot: the plan as the client reads it. */
+.cardio-plan { margin: 2px 0 0; }

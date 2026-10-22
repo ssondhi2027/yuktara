@@ -15,23 +15,23 @@ Weekly coaching for training and nutrition. Clients follow the program their coa
 
 | Page | What it does |
 | --- | --- |
-| Home `/` | The week at a glance: today's workout, food so far, habits (steps, water, sleep, morning weight), weight trend, best lifts, the coach's latest note |
+| Home `/` | The week at a glance: today's workout, food so far, habits (steps, water, sleep, morning weight), weight trend, best lifts with this week's personal records, the coach's latest note |
 | Train `/train` | 3D body map of this week's hard sets per muscle, today's workout and the week's plan from the coach (start, or skip with a reason), recent workouts |
-| Workout `/train/workout/:id` | Log sets (weight, reps, RPE) as you go, marking warm-ups and adding drop sets; supersets shown together, round by round; swap an exercise for today; "last time" for each lift; resumes after a reload; "how hard was it?" (1–10) and a summary when you finish |
+| Workout `/train/workout/:id` | Log sets (weight, reps, RPE) as you go, marking warm-ups and adding drop sets; cardio (treadmill, bike, rower, swimming…) by time, distance, level and heart rate, in rounds; supersets shown together, round by round; swap an exercise for today; "last time" for each lift; a badge on a set that beats your best (weight, reps, estimated 1RM); resumes after a reload; "how hard was it?" (1–10) and a summary when you finish, with any new personal records and milestones |
 | Food `/food` | The coach's meal plan for each meal ("Log as planned" or "Log something else"); meals logged as foods with amounts (calories and macros follow the amount) or as a quick add; totals against the coach's targets, "on plan?" rating, upcoming targets ("From Mon, Oct 19") |
 | Check-in `/check-in` | The weekly check-in: weight, waist and hips, scores, photos, wins and struggles, the coach's own questions. Past check-ins at `/check-in/:id` |
-| Progress `/progress` | KPIs and charts for 4 weeks, 12 weeks or since start: weight with goal and a forecast range, workouts, volume, muscles, estimated 1RM (RPE-aware, smoothed, with a forecast), calories, protein, habits, check-in measurements and scores; an Insights card with the goal date (an estimate), plateaus and up to three patterns |
+| Progress `/progress` | KPIs and charts for 4 weeks, 12 weeks or since start: weight with goal and a forecast range, workouts, volume, muscles, cardio minutes per week and by activity; strength for any lifts you pick, up to four (estimated 1RM, RPE-aware and smoothed with a forecast, or the heaviest set, or volume; start, now, change and best per lift), calories, protein, habits, check-in measurements and scores; personal records for the lifts on the strength chart (rings on the chart); on phones a KPI opens its charts; an Insights card with the goal date (an estimate), plateaus and up to three patterns |
 | Messages `/messages` | Chat with the coach; check-in feedback appears in the same thread |
-| Profile `/settings` | Profile photo, the client's own answers (name, phone, height, goal weight, diet, training days, injuries…), read-only coach settings, units, log out |
+| Profile `/settings` | Profile photo, the client's own answers (name, phone, height, goal weight, diet, training days, injuries…), read-only coach settings, units, celebrating new records (on or off), log out |
 
 **Coach app**
 
 | Page | What it does |
 | --- | --- |
 | Dashboard `/coach` | Every client this week, the review queue, who needs attention, the invite code |
-| Check-ins `/coach/check-ins/:id` | Review a client's check-in with charts and photos, the meal plan vs what was eaten, reply, set new targets, apply a swap. Tabs for the client's Training (workouts vs plan, charts, every workout), Nutrition (targets, plan vs eaten, that week's meals by day), Progress (their Progress page) and Past check-ins |
-| Clients `/coach/clients` | Search, filter and sort clients; plateau and goal-date flags on each row; a full view with status (pause, archive), check-in day, the client's Insights card, weight trend, check-in history, meal plan vs eaten, workouts (with effort scores and skips), phone and setup answers, and private notes |
-| Programs `/coach/programs` | Generate a program from the client's answers, edit it in the builder (including supersets), assign it, save and reuse templates; add your own exercises (Exercises tab) |
+| Check-ins `/coach/check-ins/:id` | Review a client's check-in with charts and photos, the meal plan vs what was eaten, reply, set new targets, apply a swap. Tabs for the client's Training (workouts vs plan, that week's personal records, charts, every workout), Nutrition (targets, plan vs eaten, that week's meals by day), Progress (their Progress page) and Past check-ins |
+| Clients `/coach/clients` | Search, filter and sort clients; plateau and goal-date flags on each row; a full view with status (pause, archive), check-in day, the client's Insights card, weight trend, check-in history, meal plan vs eaten, workouts (with effort scores, skips and personal records), phone and setup answers, and private notes |
+| Programs `/coach/programs` | Generate a program from the client's answers, edit it in the builder (including supersets and cardio: rounds of minutes or a distance at an effort), assign it, save and reuse templates; add your own strength or cardio exercises (Exercises tab) |
 | Nutrition plans `/coach/nutrition` | Each client's targets and meal plan (foods and amounts per meal, against the targets, with the client's diet and foods to avoid), from today or a later date, version history and templates; add your own foods |
 | Messages `/coach/messages` | Conversations with every client, unread counts |
 | Settings `/coach/settings` | Profile photo, name, invite code (copy, rotate), weekly check-in questions, default check-in day, units |
@@ -72,7 +72,7 @@ Sample numbers never appear in Supabase mode: a brand-new account sees empty sta
 "Try without an account" on the Log in page starts a guest session, in any build. A guest uses the client app on their own data, which stays on the device:
 
 - **Where:** one record, `yuktara.guest.v1`, in IndexedDB (meal and profile photos as Blobs); localStorage if IndexedDB isn't available (photos then last for the visit); memory only if the browser blocks both, and the banner says the data won't be kept. A small flag (`yuktara.guest.session`) makes a reload resume the guest session.
-- **What works:** own workouts (logger, warm-ups, drop sets), meals (food list, quick add, photos), steps, water, sleep, weight, the day rating, Home, Progress (KPIs, forecasts, insights) and Profile (units, body type, photo).
+- **What works:** own workouts (logger, warm-ups, drop sets, personal records), meals (food list, quick add, photos), steps, water, sleep, weight, the day rating, Home, Progress (KPIs, forecasts, insights) and Profile (units, body type, photo).
 - **What needs an account:** messages, check-ins, coach targets, meal plans, programs and the coach app; those show "Create an account to work with a coach".
 - **Never reaches the server:** `lib/api.ts` sends a guest's calls to `lib/guest.ts`; anything else is refused. The Supabase client is created lazily and refuses in a guest session, as do `backend()` and photo uploads (loudly in development).
 - **Leaving:** "Create an account" keeps the guest data on the device (try again to resume it); "Delete my data" or signing out deletes it, after a warning.
@@ -154,7 +154,7 @@ npx supabase db reset       # applies every migration and seed.sql (the exercise
 npx supabase db push        # applies migrations to the linked project
 ```
 
-Migrations live in `supabase/migrations` (`0001`–`0024`). Never edit one that has been applied; add the next number. What each one adds is in [docs/schema.md](docs/schema.md).
+Migrations live in `supabase/migrations` (`0001`–`0026`). Never edit one that has been applied; add the next number. What each one adds is in [docs/schema.md](docs/schema.md).
 
 ## Tests and checks
 
@@ -165,7 +165,7 @@ make lint            # ruff (check and format) + TypeScript typecheck
 make walkthrough     # the whole flow on the local stack, as real users (needs `make dev` running)
 ```
 
-- **Frontend:** `npm run typecheck`, `npm test` (Node's built-in test runner: program generator, units, targets, progress calculations, forecasts and insight rules, profile and exercise checks, food amounts and meal plans, skipped workouts, drop sets and supersets, the guest store), `npm run build`, `npm run check:progress` (renders the Progress page in Node for phone, tablet and desktop, in kg and lb) and `npm run check:guest` (guest mode with Supabase and the network stubbed to fail: nothing may reach them).
+- **Frontend:** `npm run typecheck`, `npm test` (Node's built-in test runner: program generator, units, targets, progress calculations, forecasts and insight rules, profile and exercise checks, food amounts and meal plans, skipped workouts, drop sets and supersets, personal records and milestones, cardio, the guest store), `npm run build`, `npm run check:progress` (renders the Progress page in Node for phone, tablet and desktop, in kg and lb) and `npm run check:guest` (guest mode with Supabase and the network stubbed to fail: nothing may reach them).
 - **Walkthrough** (`backend/scripts/walkthrough.py`): sign-up and confirmation, setup, targets, logging, units, coach pages, check-in and review, a generated program and logged workouts, messages, and every query the apps make, all under RLS.
 
 CI (`.github/workflows/ci.yml`) runs the frontend checks, the backend lint and tests, the database tests and dependency audits on every pull request.

@@ -33,3 +33,40 @@
 .muscle-bars .num { text-align: right; }
 
 .coach-note-p { display: flex; flex-direction: column; gap: 16px; margin-top: 16px; }
+
+/* Period switch: "Updating…" while the next period loads; the dashboard dims meanwhile. */
+.period-pick { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.progress-dash { transition: opacity 0.2s ease; }
+.progress-dash.updating { opacity: 0.55; }
+@media (prefers-reduced-motion: reduce) { .progress-dash { transition: none; } }
+
+/* Phones: a KPI opens its charts. */
+.kpi-btn { font: inherit; color: inherit; text-align: left; cursor: pointer; }
+.kpi-btn:active { transform: scale(0.99); }
+.kpi-btn:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+
+/* Strength: what to show, which lifts (up to four), and a table per lift. */
+.lift-filters { display: flex; flex-direction: column; gap: 10px; margin: 2px 0 4px; }
+.lift-filter-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.lift-filter-row .seg button { padding: 6px 12px; font-size: 13px; }
+.small-chip { height: 30px; padding: 0 12px; font-size: 13px; }
+/* Phones: one row that scrolls sideways; wider screens wrap. */
+.lift-chips { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; scrollbar-width: thin; -webkit-overflow-scrolling: touch; }
+@media (min-width: 768px) { .lift-chips { flex-wrap: wrap; overflow: visible; } }
+.lift-chip { flex: none; height: 32px; padding: 0 12px; font-size: 13px; }
+.lift-chip:disabled { opacity: 0.45; cursor: not-allowed; }
+.lift-chip[aria-pressed='true'] { background: var(--surface-2); border-color: var(--ink); color: var(--ink); }
+.lift-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; flex: none; }
+
+.lift-table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; table-layout: fixed; }
+.lift-table th, .lift-table td { padding: 7px 4px; border-top: 1px solid var(--line); text-align: right; white-space: nowrap; }
+.lift-table thead th { border-top: 0; font-size: 12px; font-weight: 600; color: var(--ink-3); }
+.lift-table th:first-child { text-align: left; width: 40%; }
+.lift-table tbody th { font-weight: 600; }
+.lift-name { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.lift-name span { overflow: hidden; text-overflow: ellipsis; }
+.lift-table td.up { color: var(--good); font-weight: 600; }
+
+/* Cardio: each activity's totals under the weekly bars. */
+.cardio-list { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 6px; }
+.cardio-list li { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; padding-top: 6px; border-top: 1px solid var(--line); }

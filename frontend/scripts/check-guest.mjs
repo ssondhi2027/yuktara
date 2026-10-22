@@ -180,6 +180,10 @@ try {
   const detail = await a.api.progressDetail('p12')
   ok(detail.kpis.weight.value != null && detail.weight.forecast.enough, `Progress: KPIs and a weight forecast from the guest's own data (${detail.kpis.weight.value} kg)`)
   ok(detail.strength.length === 1 && detail.strength[0].points.length === 3, 'Progress: 1RM points per session (drops left out)')
+  // Personal records from the guest's own workouts (60 → 62.5 → 65 kg squats): worked out on the device.
+  const recs = detail.records.filter((r) => r.kind !== 'milestone').map((r) => `${r.kind} ${r.value}`)
+  ok(recs.includes('weight 65') && recs.includes('weight 62.5') && !recs.includes('weight 60'), `Progress: personal records from their workouts, the first one the baseline (${recs.join(', ')})`)
+  ok(train.recent[0].records.some((r) => r.kind === 'weight' && r.value === 65), 'Train: the latest workout carries its records')
   for (const [name, w] of [['phone', 390], ['desktop', 1400]]) {
     for (const [label, page] of Object.entries(a.pages)) {
       if (label === 'shell') continue
@@ -188,6 +192,8 @@ try {
       if (label === 'food') ok(html.includes('Dal and rice'), `guest with data food (${name}): the logged meal`)
       // Phones show one chart group at a time (Weight first); strength is on the Training tab.
       if (label === 'progress' && name === 'desktop') ok(html.includes('Back squat'), `guest with data progress (${name}): strength from their workouts`)
+      if (label === 'progress' && name === 'desktop') ok(html.includes('<h3>Personal records</h3>') && html.includes('kit-dot mark'), `guest with data progress (${name}): records card and rings on the strength chart`)
+      if (label === 'home') ok(html.includes(name === 'desktop' ? 'New this week' : 'new personal record'), `guest with data home (${name}): this week's records`)
     }
   }
   untouched('guest with data')

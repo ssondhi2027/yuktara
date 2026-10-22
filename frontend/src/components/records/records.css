@@ -1,0 +1,44 @@
+/* Personal record badges (components/records/Records.tsx). */
+.pr-chip {
+  display: inline-flex; align-items: center; padding: 2px 9px; border-radius: var(--pill);
+  background: var(--gold); color: var(--on-gold); font-size: 12px; font-weight: 700; line-height: 1.5; white-space: nowrap;
+}
+.pr-chip.milestone { background: var(--mint); color: var(--mint-ink); }
+.set-records { grid-column: 2 / -1; display: flex; flex-wrap: wrap; gap: 6px; }
+
+.record-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
+.record-list li { display: grid; gap: 3px; min-width: 0; }
+.record-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.record-date { margin-left: auto; }
+
+/* The workout summary's record card; "celebrate" only right after Finish, if turned on in Settings. */
+.records-card { border: 1px solid var(--gold); }
+.workout-page .records-card { margin-bottom: 14px; }
+.records-card .records-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.records-icon { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 50%; background: var(--gold); color: var(--on-gold); flex: none; }
+.records-card.celebrate { animation: record-in 0.6s ease-out both; }
+.records-card.celebrate .records-icon { animation: record-glow 1.8s ease-out 0.35s 2; }
+@keyframes record-in { from { opacity: 0; transform: translateY(10px) scale(0.98); } to { opacity: 1; transform: none; } }
+@keyframes record-glow { 0% { box-shadow: 0 0 0 0 rgb(221 172 79 / 0.6); } 100% { box-shadow: 0 0 0 14px rgb(221 172 79 / 0); } }
+@media (prefers-reduced-motion: reduce) {
+  .records-card.celebrate, .records-card.celebrate .records-icon { animation: none; }
+}
+
+/* Home: records this week, above the best lifts. */
+.best-recent { padding-bottom: 12px; margin-bottom: 4px; border-bottom: 1px solid var(--line); }
+.best-new { margin-left: 6px; }
+
+/* Progress: records by lift. */
+.records-by-lift { display: grid; gap: 16px; }
+.records-by-lift h4 { font-size: 14px; margin: 0 0 8px; }
+
+/* Coach: a workout's records, above its sets. */
+.workout-records { margin: 10px 0; padding: 10px 12px; border-radius: var(--radius-sm); background: var(--surface-2); }
+
+/* Coach: the check-in week's records (review Training tab). */
+.review-records { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+
+/* Home on phones and tablets: this week's records in one line. */
+.records-note { display: flex; align-items: center; gap: 12px; color: inherit; text-decoration: none; }
+.records-note .grow { display: grid; gap: 2px; }
+.records-note-line { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

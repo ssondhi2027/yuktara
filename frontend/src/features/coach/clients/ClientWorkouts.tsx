@@ -4,6 +4,8 @@ import { monthDay, weekday } from '@/lib/dates'
 import { MUSCLE_LABEL } from '@/lib/muscles'
 import { setsLine, supersetLine, volumeLabel } from '@/lib/workouts'
 import { useUnits } from '@/app/auth'
+import { visibleRecords } from '@/lib/records'
+import { RecordList } from '@/components/records/Records'
 
 /** The client's logged workouts, read-only (RLS doesn't let the coach change them). Weights in the coach's own unit. */
 export function ClientWorkouts({ clientId, firstName }: { clientId: string; firstName: string }) {
@@ -21,7 +23,7 @@ export function ClientWorkouts({ clientId, firstName }: { clientId: string; firs
       {data?.length === 0 && <p className="small muted">No workouts logged yet.</p>}
       {data && data.length > 0 && (
         <ul className="list-rows">
-          {data.map((w) => w.skipped ? (
+          {data.map((w) => { const recs = visibleRecords(w.records ?? [], units); return w.skipped ? (
             <li key={w.id}>
               <b>{w.name}</b> <span className="small muted">· {weekday(w.performed_on)} {monthDay(w.performed_on)}</span>
               <span className="pill awaiting" style={{ marginLeft: 8 }}>Skipped</span>
@@ -33,11 +35,13 @@ export function ClientWorkouts({ clientId, firstName }: { clientId: string; firs
                 <summary>
                   <b>{w.name}</b> <span className="small muted">· {weekday(w.performed_on)} {monthDay(w.performed_on)}</span>
                   {!w.finished && <span className="pill gold" style={{ marginLeft: 8 }}>In progress</span>}
+                  {recs.length > 0 && <span className="pr-chip" style={{ marginLeft: 8 }}>{recs.length === 1 ? '1 record' : `${recs.length} records`}</span>}
                   <div className="xs muted">
                     {w.sets} sets{w.volume_kg > 0 ? ` · ${volumeLabel(w.volume_kg, units)}` : ''}{w.duration_min != null ? ` · ${w.duration_min} min` : ''}{w.effort != null ? ` · effort ${w.effort}/10` : ''}
                     {w.muscles.length > 0 && ` · ${w.muscles.map((m) => MUSCLE_LABEL[m]).join(', ')}`}
                   </div>
                 </summary>
+                {recs.length > 0 && <div className="workout-records"><RecordList records={recs} units={units} /></div>}
                 {w.supersets.map((g) => <div key={g.join('+')} className="xs muted">{supersetLine(g)}</div>)}
                 <dl className="answers-list workout-detail">
                   {w.exercises.map((e) => <div key={e.name}><dt>{e.name}</dt><dd>{setsLine(e.sets, units)}</dd></div>)}
@@ -45,7 +49,7 @@ export function ClientWorkouts({ clientId, firstName }: { clientId: string; firs
                 </dl>
               </details>
             </li>
-          ))}
+          ) })}
         </ul>
       )}
     </section>

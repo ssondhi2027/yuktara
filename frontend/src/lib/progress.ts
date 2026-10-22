@@ -5,6 +5,7 @@
 // tests/progress.test.ts. Weights are kg here; screens convert for display.
 
 import type { MuscleGroup } from '../types/db'
+import type { PersonalRecord } from './records'
 import {
   forecastLift, liftPlateau, oneRepMax, smoothLift, weightSignals, windowStart,
   type LiftForecast, type LiftPoint, type Plateau, type WeightForecast,
@@ -31,9 +32,15 @@ export interface ProgressRaw {
     date: string
     template_id: string | null
     /** working sets (warm-ups left out); `drop` marks a drop set (counts for volume, not as a hard set or for 1RM) */
-    sets: { exercise_id: string; name: string; kg: number | null; reps: number | null; rpe?: number | null; primary: MuscleGroup[]; drop?: boolean }[]
+    sets: {
+      exercise_id: string; name: string; kg: number | null; reps: number | null; rpe?: number | null; primary: MuscleGroup[]; drop?: boolean
+      /** cardio bouts (0026): time and distance; no weight or reps */
+      duration_s?: number | null; distance_m?: number | null
+    }[]
   }[]
   check_ins: { week_start: string; waist_cm: number | null; hips_cm: number | null; energy: number | null; sleep: number | null; stress: number | null; hunger: number | null }[]
+  /** personal records and milestones, any order (lib/records.ts); none if left out */
+  records?: PersonalRecord[]
 }
 
 /** A KPI: this period's value, the previous period's (for the trend arrow), and a target if there is one. */
@@ -64,20 +71,47 @@ export interface ProgressDetail {
     plateau: Plateau | null
   }
   training: {
-    weekly: { week: string; done: number; planned: number; volume_kg: number; sets: number }[]
+    /** sets: hard sets (cardio bouts aren't sets); cardio_s and cardio_m: cardio time and distance */
+    weekly: { week: string; done: number; planned: number; volume_kg: number; sets: number; cardio_s: number; cardio_m: number }[]
     muscles: { muscle: MuscleGroup; sets: number }[]
   }
+  /** cardio in the period by activity, most time first */
+  cardio: { exercise_id: string; name: string; sessions: number; seconds: number; metres: number; longest_m: number | null }[]
   /**
    * The three most-logged lifts in the period: per-session best estimate (raw) and
    * smoothed line for the period; forecast and plateau from the last 12 weeks.
    */
   strength: { exercise_id: string; name: string; sessions: number; points: LiftPoint[]; forecast: LiftForecast; plateau: Plateau | null }[]
+  /**
+   * Every lift with weighted sets in the period (most sessions first, at most
+   * 12), for the strength chart's filters: per session the heaviest working set
+   * and the volume, plus the same 1RM points, forecast and plateau as `strength`.
+   */
+  lifts: LiftHistory[]
   nutrition: {
     daily: { date: string; calories: number | null; protein_g: number | null; calories_target: number | null; protein_target: number | null }[]
     weekly_on_plan: { week: string; pct: number | null; meals: number }[]
   }
   habits: { date: string; steps: number | null; water_ml: number | null; sleep_h: number | null; steps_target: number | null; water_target: number | null; sleep_target: number | null }[]
   check_ins: ProgressRaw['check_ins']
+  /** personal records and milestones in the period, newest first */
+  records: PersonalRecord[]
+}
+
+/** One session of one lift: the heaviest working set (kg × reps), volume (drops included, kg) and hard sets. */
+export interface LiftDay { date: string; top_kg: number; top_reps: number; volume_kg: number; sets: number }
+
+export interface LiftHistory {
+  exercise_id: string
+  name: string
+  /** sessions in the period with a weighted working set */
+  sessions: number
+  /** those sessions, oldest first */
+  days: LiftDay[]
+  /** estimated 1RM per session in the period (some sessions can't give one), smoothed */
+  points: LiftPoint[]
+  forecast: LiftForecast
+  plateau: Plateau | null
 }
 
 // ---------- Dates (local, YYYY-MM-DD; no time zones involved) ----------
@@ -181,8 +215,14 @@ export function progressFrom(raw: ProgressRaw, period: Period): ProgressDetail {
   const trainingWeek = (w: string) => {
     const planned = plannedIn(raw.programs, w)
     const sets = raw.sessions.filter((x) => inWeeks(x.date, [w])).flatMap((x) => x.sets)
-    // Volume counts every set; a working set and its drops are one hard set.
-    return { week: w, done: doneIn(raw.sessions, w, planned), planned, volume_kg: Math.round(volumeKg(sets)), sets: sets.filter((st) => !st.drop).length }
+    // Volume counts every set; a working set and its drops are one hard set; cardio bouts are time and distance.
+    const bouts = sets.filter((st) => st.duration_s != null)
+    return {
+      week: w, done: doneIn(raw.sessions, w, planned), planned, volume_kg: Math.round(volumeKg(sets)),
+      sets: sets.filter((st) => !st.drop && st.duration_s == null).length,
+      cardio_s: bouts.reduce((a, st) => a + st.duration_s!, 0),
+      cardio_m: Math.round(bouts.reduce((a, st) => a + (st.distance_m ?? 0), 0)),
+    }
   }
   const tWeeks = weeks.map(trainingWeek)
   const tPrev = previous.map(trainingWeek)
@@ -212,16 +252,62 @@ export function progressFrom(raw: ProgressRaw, period: Period): ProgressDetail {
       bySession.set(st.exercise_id, e)
     }
   }
-  const strength = [...bySession.entries()]
-    .map(([id, e]) => {
-      const all = smoothLift([...e.dates.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([date, v]) => ({ date, ...v })))
-      const points = all.filter((p) => inWeeks(p.date, weeks))
-      const recent = all.filter((p) => p.date >= win)
-      return { exercise_id: id, name: e.name, sessions: points.length, points, forecast: forecastLift(recent), plateau: liftPlateau(recent) }
-    })
+  const oneRm = new Map([...bySession.entries()].map(([id, e]) => {
+    const all = smoothLift([...e.dates.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([date, v]) => ({ date, ...v })))
+    const points = all.filter((p) => inWeeks(p.date, weeks))
+    const recent = all.filter((p) => p.date >= win)
+    return [id, { exercise_id: id, name: e.name, sessions: points.length, points, forecast: forecastLift(recent), plateau: liftPlateau(recent) }]
+  }))
+  const strength = [...oneRm.values()]
     .filter((l) => l.sessions > 0)
     .sort((a, b) => b.sessions - a.sessions || a.name.localeCompare(b.name))
     .slice(0, 3)
+
+  // Cardio by activity.
+  const cardioBy = new Map<string, { exercise_id: string; name: string; dates: Set<string>; seconds: number; metres: number; longest_m: number | null }>()
+  for (const x of raw.sessions.filter((x) => inWeeks(x.date, weeks) && x.date <= raw.today)) {
+    for (const st of x.sets) {
+      if (st.duration_s == null) continue
+      const c = cardioBy.get(st.exercise_id) ?? { exercise_id: st.exercise_id, name: st.name, dates: new Set(), seconds: 0, metres: 0, longest_m: null }
+      c.dates.add(x.date)
+      c.seconds += st.duration_s
+      c.metres += st.distance_m ?? 0
+      if (st.distance_m != null) c.longest_m = Math.max(c.longest_m ?? 0, st.distance_m)
+      cardioBy.set(st.exercise_id, c)
+    }
+  }
+  const cardio = [...cardioBy.values()]
+    .map(({ dates, ...c }) => ({ ...c, sessions: dates.size, metres: Math.round(c.metres) }))
+    .sort((a, b) => b.seconds - a.seconds || a.name.localeCompare(b.name))
+
+  // Every lift with weighted sets in the period: heaviest set and volume per session.
+  const liftDays = new Map<string, { name: string; days: Map<string, LiftDay> }>()
+  for (const x of raw.sessions.filter((x) => inWeeks(x.date, weeks) && x.date <= raw.today)) {
+    for (const st of x.sets) {
+      if (st.kg == null || st.kg <= 0 || st.reps == null || st.reps < 1) continue
+      const e = liftDays.get(st.exercise_id) ?? { name: st.name, days: new Map() }
+      const dd = e.days.get(x.date) ?? { date: x.date, top_kg: 0, top_reps: 0, volume_kg: 0, sets: 0 }
+      dd.volume_kg += st.kg * st.reps
+      if (!st.drop) {
+        dd.sets++
+        if (st.kg > dd.top_kg || (st.kg === dd.top_kg && st.reps > dd.top_reps)) { dd.top_kg = st.kg; dd.top_reps = st.reps }
+      }
+      e.days.set(x.date, dd)
+      liftDays.set(st.exercise_id, e)
+    }
+  }
+  const noForecast: LiftForecast = { enough: false, slope_kg_week: null, points: [] }
+  const lifts: LiftHistory[] = [...liftDays.entries()]
+    .map(([id, e]) => {
+      // A session of drops only (no working set) has no top set; it still counts for volume.
+      const days = [...e.days.values()].filter((x) => x.sets > 0).sort((a, b) => a.date.localeCompare(b.date))
+        .map((x) => ({ ...x, volume_kg: Math.round(x.volume_kg) }))
+      const rm = oneRm.get(id)
+      return { exercise_id: id, name: e.name, sessions: days.length, days, points: rm?.points ?? [], forecast: rm?.forecast ?? noForecast, plateau: rm?.plateau ?? null }
+    })
+    .filter((l) => l.sessions > 0)
+    .sort((a, b) => b.sessions - a.sessions || a.name.localeCompare(b.name))
+    .slice(0, 12)
 
   // Nutrition: per logged day, against the targets in force that day.
   const mealsOn = (d: string) => raw.meals.filter((m) => m.date === d)
@@ -289,13 +375,16 @@ export function progressFrom(raw: ProgressRaw, period: Period): ProgressDetail {
       weekly: tWeeks,
       muscles: [...muscleSets.entries()].map(([muscle, sets]) => ({ muscle, sets })).sort((a, b) => b.sets - a.sets),
     },
+    cardio,
     strength,
+    lifts,
     nutrition: {
       daily: nDays,
       weekly_on_plan: weeks.map((w) => ({ week: w, pct: onPlanPct(mealsIn([w])), meals: mealsIn([w]).length })),
     },
     habits: hDays,
     check_ins: raw.check_ins.filter((c) => inWeeks(c.week_start, weeks)).sort((a, b) => a.week_start.localeCompare(b.week_start)),
+    records: (raw.records ?? []).filter((r) => inWeeks(r.date, weeks)).sort((a, b) => b.date.localeCompare(a.date)),
   }
 }
 
@@ -312,4 +401,47 @@ export function trend(k: Kpi, flatWithin = 0): 'up' | 'down' | 'flat' | null {
   if (k.value == null || k.previous == null) return null
   const d = k.value - k.previous
   return Math.abs(d) <= flatWithin ? 'flat' : d > 0 ? 'up' : 'down'
+}
+
+// ---------- The strength chart's filters ----------
+
+/** What the strength chart shows for each lift. */
+export type LiftMeasure = 'e1rm' | 'top' | 'volume'
+
+/** A lift's values for a measure, oldest first, in kg: the smoothed 1RM, the heaviest set, or the volume. */
+export function liftValues(l: LiftHistory, m: LiftMeasure): { date: string; value: number }[] {
+  if (m === 'e1rm') return l.points.map((p) => ({ date: p.date, value: p.smooth }))
+  return l.days.map((x) => ({ date: x.date, value: m === 'top' ? x.top_kg : x.volume_kg }))
+}
+
+/** First and latest value in the period, the change between them, and the best (for 1RM, the best single session's estimate). */
+export function liftSummary(l: LiftHistory, m: LiftMeasure): { start: number; now: number; change: number; best: number; sessions: number } | null {
+  const v = liftValues(l, m)
+  if (!v.length) return null
+  const best = m === 'e1rm' ? Math.max(...l.points.map((p) => p.raw)) : Math.max(...v.map((x) => x.value))
+  const start = v[0].value
+  const now = v[v.length - 1].value
+  return { start, now, change: Number((now - start).toFixed(2)), best, sessions: v.length }
+}
+
+/** The most lifts the chart shows at once (one colour each). */
+export const MAX_CHART_LIFTS = 4
+
+/**
+ * The lifts to chart: the chosen ones still in the period (in the period's
+ * order), else the defaults (the main lifts), else the most-logged ones.
+ */
+export function pickLifts(lifts: LiftHistory[], chosen: string[] | null, defaults: string[]): string[] {
+  const have = new Set(lifts.map((l) => l.exercise_id))
+  const order = (ids: string[]) => lifts.map((l) => l.exercise_id).filter((id) => ids.includes(id)).slice(0, MAX_CHART_LIFTS)
+  const kept = chosen ? order(chosen.filter((id) => have.has(id))) : []
+  if (kept.length) return kept
+  const fallback = order(defaults.filter((id) => have.has(id)))
+  return fallback.length ? fallback : lifts.slice(0, 3).map((l) => l.exercise_id)
+}
+
+/** Choosing a lift on or off: never fewer than one, never more than MAX_CHART_LIFTS. */
+export function toggleLift(selected: string[], id: string): string[] {
+  if (selected.includes(id)) return selected.length > 1 ? selected.filter((x) => x !== id) : selected
+  return selected.length >= MAX_CHART_LIFTS ? selected : [...selected, id]
 }

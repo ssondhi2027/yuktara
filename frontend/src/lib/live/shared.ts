@@ -3,7 +3,7 @@
 
 import type { PostgrestError } from '@supabase/supabase-js'
 import type { MealType, MuscleGroup } from '@/types/db'
-import type { CoachNote, Person, Targets, WorkoutSummary } from '../api'
+import type { CoachNote, Person, PersonalRecord, Targets, WorkoutSummary } from '../api'
 import { ApiError } from '../backend'
 import { addDays, monthDay, parseDate, toISODate, weekStart } from '../dates'
 import { getSupabase } from '../supabase'
@@ -145,7 +145,7 @@ export const round1 = (x: number) => Math.round(x * 10) / 10
 
 /** Columns for a session plus its sets, enough for summarize(). */
 export const SESSION_SUMMARY_COLS =
-  'id, performed_on, finished_at, duration_min, notes, effort, status, workout_templates(name), set_logs(set_number, reps, weight_kg, rpe, is_warmup, drop_of, exercise_id, exercises(name, exercise_muscles(muscle, role)), template_exercises(superset_group))'
+  'id, performed_on, finished_at, duration_min, notes, effort, status, workout_templates(name), set_logs(set_number, reps, weight_kg, rpe, is_warmup, drop_of, duration_s, distance_m, level, avg_hr, exercise_id, exercises(name, kind, exercise_muscles(muscle, role)), template_exercises(superset_group))'
 
 const numOrNull = (x: unknown) => (x == null ? null : Number(x))
 
@@ -163,6 +163,7 @@ export function sessionSummary(row: any): WorkoutSummary {
       rpe: numOrNull(l.rpe),
       drop_of: l.drop_of ?? null,
       superset: l.template_exercises?.superset_group ?? null,
+      ...(l.duration_s != null ? { duration_s: l.duration_s, distance_m: numOrNull(l.distance_m), level: numOrNull(l.level), avg_hr: l.avg_hr, cardio: true } : {}),
     }))
   return summarize({
     id: row.id,
@@ -181,5 +182,28 @@ export async function sessionSummaries(client: string, limit: number, finishedOn
   let q = db().from('workout_sessions').select(SESSION_SUMMARY_COLS).eq('client_id', client)
   if (finishedOnly) q = q.not('finished_at', 'is', null)
   const rows = must(await q.order('performed_on', { ascending: false }).order('started_at', { ascending: false }).limit(limit))
-  return (rows as any[]).map(sessionSummary)
+  const summaries = (rows as any[]).map(sessionSummary)
+  const records = await recordsOf(client, { sessionIds: summaries.filter((w) => w.finished && !w.skipped).map((w) => w.id) })
+  return summaries.map((w) => ({ ...w, records: records.filter((r) => r.session_id === w.id) }))
+}
+
+// ---------- Personal records (0025) ----------
+
+const RECORD_COLS = 'session_id, exercise_id, kind, milestone, value, previous, set_number, weight_kg, reps, rpe, duration_s, distance_m, achieved_on, exercises(name)'
+
+function toRecord(r: any): PersonalRecord {
+  return {
+    session_id: r.session_id, exercise_id: r.exercise_id, exercise: r.exercises?.name ?? (r.exercise_id ? 'Exercise' : ''), kind: r.kind,
+    milestone: r.milestone, value: Number(r.value), previous: numOrNull(r.previous), set_number: r.set_number,
+    weight_kg: numOrNull(r.weight_kg), reps: r.reps, rpe: numOrNull(r.rpe), duration_s: r.duration_s ?? null, distance_m: numOrNull(r.distance_m), date: r.achieved_on,
+  }
+}
+
+/** A client's saved records (as the client or their coach), newest first: for some workouts, or since a date, or all. */
+export async function recordsOf(client: string, opts: { sessionIds?: string[]; from?: string } = {}): Promise<PersonalRecord[]> {
+  if (opts.sessionIds && !opts.sessionIds.length) return []
+  let q = db().from('personal_records').select(RECORD_COLS).eq('client_id', client)
+  if (opts.sessionIds) q = q.in('session_id', opts.sessionIds)
+  if (opts.from) q = q.gte('achieved_on', opts.from)
+  return (must(await q.order('achieved_on', { ascending: false }).limit(1000)) as any[]).map(toRecord)
 }

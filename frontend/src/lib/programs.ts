@@ -3,7 +3,8 @@
 // weekly sets-per-muscle summary.
 
 import type { MuscleGroup } from '@/types/db'
-import type { ClientDetail, LibraryExercise, Program, ProgramStatus } from './api'
+import type { ClientDetail, LibraryExercise, Program, ProgramExercise, ProgramStatus } from './api'
+import { cardioTargetProblems, cardioTargetText, isCardioTarget } from './cardio'
 import { addDays, parseDate, weekStart } from './dates'
 import { generateProgram, HEALTH_RANGE, LEVELS } from './programGen'
 
@@ -87,6 +88,11 @@ export function programProblems(p: Program): string[] {
     const label = w.name.trim() || `Workout ${i + 1}`
     if (!w.name.trim()) out.push(`Workout ${i + 1} needs a name.`)
     w.exercises.forEach((x) => {
+      if (isCardioTarget(x)) {
+        for (const p of cardioTargetProblems({ ...x, sets: x.sets })) out.push(`${label} · ${x.name}: ${p}.`)
+        if (x.rest_seconds != null && !(x.rest_seconds >= 0 && x.rest_seconds <= 900)) out.push(`${label} · ${x.name}: rest 0 to 900 seconds.`)
+        return
+      }
       if (!(Number.isInteger(x.sets) && x.sets >= 1 && x.sets <= 10)) out.push(`${label} · ${x.name}: sets 1 to 10.`)
       if (!x.reps.trim()) out.push(`${label} · ${x.name}: reps are required (e.g. 8–10).`)
       else if (x.reps.trim().length > 20) out.push(`${label} · ${x.name}: reps up to 20 characters.`)
@@ -102,4 +108,19 @@ export function assignProblems(p: Program): string[] {
   const out = programProblems(p)
   if (!p.workouts.some((w) => w.day_of_week != null && w.exercises.length)) out.push('Give at least one workout a day and some exercises.')
   return out
+}
+
+/**
+ * A slot's targets as saved: cardio keeps its time, distance and zone, with a
+ * short summary in target_reps (metric) for anything that only reads that;
+ * strength slots save their reps and no cardio targets.
+ */
+export function slotForSave(x: ProgramExercise) {
+  const cardio = isCardioTarget(x)
+  return {
+    target_reps: cardio ? cardioTargetText({ ...x, sets: 1 }, 'metric').slice(0, 20) : x.reps,
+    target_minutes: cardio ? x.minutes ?? null : null,
+    target_distance_m: cardio ? x.distance_m ?? null : null,
+    target_zone: cardio ? x.zone ?? null : null,
+  }
 }

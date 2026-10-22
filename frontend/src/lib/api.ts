@@ -20,6 +20,8 @@ import { liveCoach } from './live/coach'
 import { liveMessages } from './live/messages'
 import type { Period, ProgressDetail } from './progress'
 import type { Plateau, WeightForecast } from './forecast'
+import type { Bests, PersonalRecord } from './records'
+import type { CardioZone } from './cardio'
 import { livePrograms } from './live/programs'
 import { liveManage } from './live/manage'
 import { liveProfile } from './live/profile'
@@ -37,6 +39,7 @@ import { guestStore } from './guestStore'
 
 export { ApiError } from './backend'
 export type { Period, ProgressDetail } from './progress'
+export type { Bests, PersonalRecord } from './records'
 
 // ---------- Shared ----------
 export interface Person { id: string; full_name: string; first_name: string; initials: string }
@@ -55,7 +58,11 @@ export interface DaySummary {
   steps: number | null
 }
 
-export interface ExerciseLine { name: string; sets: number; reps: string; weight_kg?: number; note?: string }
+export interface ExerciseLine {
+  name: string; sets: number; reps: string; weight_kg?: number; note?: string
+  /** cardio: the plan in words ("10 min · easy"), shown instead of sets × reps */
+  plan?: string
+}
 
 export interface TodayWorkout {
   name: string
@@ -146,6 +153,8 @@ export interface ClientHome {
   weight: { points: WeekPoint[]; current: number | null; change: number | null; goal: number | null; start_date: string }
   coach_note: CoachNote | null
   bests: { exercise: string; reps: number; kg: number; change: number }[]
+  /** personal records and milestones from the last 7 days, newest first (lib/records.ts) */
+  recent_records: PersonalRecord[]
 }
 
 export interface MuscleExercise {
@@ -192,6 +201,8 @@ export interface LibraryExercise {
   secondary: MuscleGroup[]
   /** the coach's own exercise (exercises.created_by set), not the shared library */
   custom?: boolean
+  /** 'cardio': logged by time and distance, no muscles (0026); strength otherwise */
+  kind?: 'strength' | 'cardio'
 }
 
 /** One slot of a planned workout, with this week's program swaps applied. */
@@ -208,6 +219,10 @@ export interface PlannedExercise {
   notes: string | null
   /** superset label ("A"): exercises sharing it are done back to back, resting after the round */
   superset?: string | null
+  /** cardio: `sets` rounds of this many minutes and/or metres at a zone; rest_seconds between rounds */
+  minutes?: number | null
+  distance_m?: number | null
+  zone?: CardioZone | null
 }
 
 export type PlannedStatus = 'done' | 'in_progress' | 'today' | 'missed' | 'upcoming' | 'anytime' | 'skipped'
@@ -235,6 +250,11 @@ export interface LoggedSet {
   rpe: number | null
   /** a drop set: the set_number of the working set it follows (0024) */
   drop_of?: number | null
+  /** cardio (0026): the bout's time, distance, level (incline or resistance) and average heart rate */
+  duration_s?: number | null
+  distance_m?: number | null
+  level?: number | null
+  avg_hr?: number | null
 }
 
 /** A set as saved: which exercise, and which planned slot it was logged against (null = added by the client). */
@@ -263,6 +283,8 @@ export interface WorkoutLog {
   plan: PlannedExercise[]
   /** every saved (ticked) set */
   sets: SetWrite[]
+  /** once finished: the personal records and milestones it set (lib/records.ts) */
+  records: PersonalRecord[]
 }
 
 /** The client's most recent sets of an exercise, before this session. */
@@ -277,6 +299,9 @@ export interface WorkoutSummary {
   sets: number
   /** Σ weight × reps, in kg */
   volume_kg: number
+  /** cardio: total time (s) and distance (m); 0 without cardio */
+  cardio_s?: number
+  cardio_m?: number
   muscles: MuscleGroup[]
   notes: string | null
   /** "How hard was this workout?" 1–10, from Finish; null if skipped */
@@ -286,6 +311,8 @@ export interface WorkoutSummary {
   /** exercises done as supersets, by name ([["Lateral raise", "Face pull"]]) */
   supersets: string[][]
   exercises: { name: string; sets: LoggedSet[] }[]
+  /** personal records and milestones set in this workout (lib/records.ts) */
+  records?: PersonalRecord[]
 }
 
 /** A program the coach assigned that hasn't started yet. */
@@ -345,6 +372,10 @@ export interface ProgramExercise {
   notes: string
   /** superset label ("A", "B"…): consecutive exercises sharing it are a superset; null = on its own */
   superset?: string | null
+  /** cardio targets (lib/cardio.ts): rounds = sets, rest_seconds between rounds; `reps` keeps a summary */
+  minutes?: number | null
+  distance_m?: number | null
+  zone?: CardioZone | null
 }
 
 export interface ProgramWorkout {
@@ -718,11 +749,14 @@ export const api = {
   workoutLog: (id: string): Promise<WorkoutLog> => (isDemo ? wait(demo.workoutLog(id)) : liveClient.workoutLog(id)),
   lastTime: (sessionId: string, exerciseIds: string[]): Promise<Record<string, LastTime>> =>
     isDemo ? wait(demo.lastTime(sessionId, exerciseIds)) : liveClient.lastTime(sessionId, exerciseIds),
+  /** Each exercise's bests from the client's other finished workouts, for the logger's record badges (lib/records.ts). */
+  recordBests: (sessionId: string, exerciseIds: string[]): Promise<Record<string, Bests>> =>
+    isDemo ? wait(demo.recordBests(sessionId, exerciseIds)) : liveClient.recordBests(sessionId, exerciseIds),
   saveSet: (sessionId: string, set: SetWrite) => (isDemo ? wait(demo.saveSet(sessionId, set)) : liveClient.saveSet(sessionId, set)),
   deleteSet: (sessionId: string, exerciseId: string, setNumber: number) =>
     isDemo ? wait(demo.deleteSet(sessionId, exerciseId, setNumber)) : liveClient.deleteSet(sessionId, exerciseId, setNumber),
   saveWorkoutNote: (id: string, notes: string) => (isDemo ? wait(demo.saveWorkoutNote(id, notes)) : liveClient.saveWorkoutNote(id, notes)),
-  /** Finishes the session; `effort` (1–10, or null if skipped) is saved in the same update. */
+  /** Finishes the session; `effort` (1–10, or null if skipped) is saved in the same update. Live: then saves its records (personal_records, 0025). */
   finishWorkout: (id: string, effort: number | null): Promise<WorkoutSummary> =>
     isDemo ? wait(demo.finishWorkout(id, effort)) : liveClient.finishWorkout(id, effort),
   /** Marks a planned workout skipped for `date` (this week), with an optional reason. */

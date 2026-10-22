@@ -14,9 +14,11 @@ import { PageError } from '@/components/ui/Loading'
 import { ClientWorkouts } from '@/features/coach/clients/ClientWorkouts'
 import { PlanVsEaten } from '@/features/coach/PlanVsEaten'
 import {
-  CaloriesCard, MeasureCard, MusclesCard, OnPlanCard, ProgressDashboard, ProgressVoice, ProteinCard, ScoresCard, StrengthCard, VolumeCard,
+  CaloriesCard, CardioCard, LiftFilterProvider, MeasureCard, MusclesCard, OnPlanCard, ProgressDashboard, ProgressVoice, ProteinCard, RecordsCard, ScoresCard, StrengthCard, VolumeCard,
   WorkoutsCard,
 } from '@/features/client/progress/ProgressPage'
+import { RecordList } from '@/components/records/Records'
+import { visibleRecords } from '@/lib/records'
 
 /** The check-in review's tabs: the check-in itself (ReviewFull / ReviewCompact), then the client's whole picture. */
 export const REVIEW_TABS = ['check-in', 'Training', 'Nutrition', 'Progress', 'Past check-ins'] as const
@@ -61,6 +63,10 @@ function TrainingTab({ r }: { r: CheckinReview }) {
   const progress = useClientProgress(r.client.id, 'p12')
   const detail = useQuery({ queryKey: ['client-detail', r.client.id], queryFn: () => api.clientDetail(r.client.id), ...COACH_REFRESH })
   const program = detail.data?.program
+  // Records set in the check-in week, so the coach can mention them in the reply.
+  const workouts = useQuery({ queryKey: ['client-workouts', r.client.id], queryFn: () => api.clientWorkouts(r.client.id), ...COACH_REFRESH })
+  const end = addDays(r.week_start, 6)
+  const weekRecords = visibleRecords((workouts.data ?? []).flatMap((w) => w.records ?? []).filter((x) => x.date >= r.week_start && x.date <= end), units)
   return (
     <>
       <section className="card review-week">
@@ -79,15 +85,26 @@ function TrainingTab({ r }: { r: CheckinReview }) {
             </Link>
           </div>
         </div>
+        {weekRecords.length > 0 && (
+          <div className="review-records">
+            <div className="eyebrow" style={{ marginBottom: 8 }}>{weekRecords.length === 1 ? 'A new personal record' : `${weekRecords.length} new personal records`} this week</div>
+            <RecordList records={weekRecords} units={units} dates />
+          </div>
+        )}
       </section>
       {progress.error ? <PageError error={progress.error} /> : !progress.data ? <Loading /> : (
         <ProgressVoice value="coach">
-          <div className="chart-grid review-charts">
-            <WorkoutsCard d={progress.data} />
-            <VolumeCard d={progress.data} units={units} />
-            <MusclesCard d={progress.data} />
-            <StrengthCard d={progress.data} units={units} />
-          </div>
+          {/* The strength chart's lift filters also choose the records card's lifts. */}
+          <LiftFilterProvider>
+            <div className="chart-grid review-charts">
+              <WorkoutsCard d={progress.data} />
+              <VolumeCard d={progress.data} units={units} />
+              <MusclesCard d={progress.data} />
+              <StrengthCard d={progress.data} units={units} />
+              <RecordsCard d={progress.data} units={units} />
+              <CardioCard d={progress.data} units={units} />
+            </div>
+          </LiftFilterProvider>
         </ProgressVoice>
       )}
       <section className="card"><ClientWorkouts clientId={r.client.id} firstName={r.client.first_name} /></section>
@@ -220,10 +237,13 @@ function ProgressTab({ r }: { r: CheckinReview }) {
     <div className={`progress ${layout}`}>
       <div className="between review-tab-head">
         <span className="small muted">{r.client.first_name}'s Progress page, as they see it, in your units.</span>
-        <Segmented label="Period" value={period} onChange={setPeriod} options={PERIODS} />
+        <div className="period-pick">
+          {progress.isPlaceholderData && <span className="xs muted" role="status">Updating…</span>}
+          <Segmented label="Period" value={period} onChange={setPeriod} options={PERIODS} />
+        </div>
       </div>
       {progress.error ? <PageError error={progress.error} /> : !progress.data ? <Loading height={320} /> : (
-        <ProgressDashboard d={progress.data} units={units} layout={layout} voice="coach" />
+        <ProgressDashboard d={progress.data} units={units} layout={layout} voice="coach" updating={progress.isPlaceholderData} />
       )}
     </div>
   )

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeftRight, Check, ChevronLeft, Minus, Plus, Trash2 } from 'lucide-react'
+import { ArrowLeftRight, Award, Check, ChevronLeft, Minus, Plus, Trash2 } from 'lucide-react'
 import {
   api, TRAINING_KEYS, type LastTime, type LibraryExercise, type PlannedExercise, type SetWrite, type WorkoutLog,
 } from '@/lib/api'
@@ -12,8 +12,14 @@ import {
   toDisplay, toKg, volumeLabel, weightUnit,
 } from '@/lib/workouts'
 import { LOAD_STEP } from '@/lib/units'
+import { recordCount, setBadges, visibleRecords, type ExerciseInfo, type RecordKind, type RecordSet } from '@/lib/records'
 import type { UnitSystem } from '@/types/db'
+import { useCelebrations } from '@/app/hooks'
 import { PageError, PageLoading } from '@/components/ui/Loading'
+import { RecordBadges, RecordList } from '@/components/records/Records'
+import {
+  cardioTargetText, cardioTotals, distanceText, distanceUnit, inputFromMetres, inputFromSeconds, metresFromInput, minutesText, parseDuration, ZONE_HINT,
+} from '@/lib/cardio'
 import { ExercisePicker } from './ExercisePicker'
 import './workout.css'
 
@@ -33,7 +39,12 @@ export default function WorkoutPage() {
 // ---------- Logging ----------
 
 /** One set row. `dropOf`: a drop set, after the working set with that number. */
-interface Row { n: number; warmup: boolean; dropOf: number | null; weight: string; reps: string; rpe: string; done: boolean; dirty: boolean; saving: boolean; error: string | null }
+/** `time`, `dist`, `level`, `hr`: a cardio bout's fields, as typed. */
+interface Row {
+  n: number; warmup: boolean; dropOf: number | null; weight: string; reps: string; rpe: string
+  time: string; dist: string; level: string; hr: string
+  done: boolean; dirty: boolean; saving: boolean; error: string | null
+}
 interface Card { key: string; slot: PlannedExercise | null; exercise_id: string; rows: Row[] }
 
 /**
@@ -69,7 +80,7 @@ function writeLayout(id: string, cards: Card[] | null) {
 }
 
 const emptyRow = (n: number, warmup = false, dropOf: number | null = null): Row =>
-  ({ n, warmup, dropOf, weight: '', reps: '', rpe: '', done: false, dirty: false, saving: false, error: null })
+  ({ n, warmup, dropOf, weight: '', reps: '', rpe: '', time: '', dist: '', level: '', hr: '', done: false, dirty: false, saving: false, error: null })
 
 /** Warm-ups first, then working sets in the order they were added, each followed by its drops. */
 function ordered(rows: Row[]): Row[] {
@@ -84,6 +95,8 @@ function loggedRow(s: SetWrite, units: UnitSystem): Row {
   return {
     n: s.set_number, warmup: !!s.is_warmup, dropOf: s.drop_of ?? null, done: true, dirty: false, saving: false, error: null,
     weight: s.weight_kg != null ? toDisplay(s.weight_kg, units) : '', reps: s.reps != null ? String(s.reps) : '', rpe: s.rpe != null ? String(s.rpe) : '',
+    time: s.duration_s != null ? inputFromSeconds(s.duration_s) : '', dist: s.distance_m != null ? inputFromMetres(s.distance_m, units) : '',
+    level: s.level != null ? String(s.level) : '', hr: s.avg_hr != null ? String(s.avg_hr) : '',
   }
 }
 
@@ -141,21 +154,37 @@ function Logger({ log, library }: { log: WorkoutLog; library: LibraryExercise[] 
     placeholderData: (prev) => prev,
   })
 
+  // Record badges: the ticked sets against the bests from earlier workouts (lib/records.ts).
+  const bests = useQuery({
+    queryKey: ['record-bests', log.id, exerciseIds.join(',')],
+    queryFn: () => api.recordBests(log.id, exerciseIds),
+    staleTime: Infinity,
+    placeholderData: (prev) => prev,
+  })
+  const badges = useMemo(() => {
+    const info: ExerciseInfo = new Map([...byId.values()].map((e) => [e.id, { name: e.name, bodyweight: BODYWEIGHT.has(e.equipment), cardio: e.kind === 'cardio' }]))
+    return setBadges(bests.data ?? {}, cards.flatMap((c) => c.rows.filter((r) => r.done).map((r) => tickedSet(c, r, units, info.get(c.exercise_id)?.cardio))), info)
+  }, [bests.data, cards, byId, units])
+
   const refresh = () => TRAINING_KEYS.forEach((k) => qc.invalidateQueries({ queryKey: [...k] }))
   const update = (key: string, f: (c: Card) => Card) => setCards((cs) => cs.map((c) => (c.key === key ? f(c) : c)))
   const updateRow = (key: string, n: number, patch: Partial<Row>) =>
     update(key, (c) => ({ ...c, rows: c.rows.map((r) => (r.n === n ? { ...r, ...patch } : r)) }))
 
+  const cardioCard = (c: Card) => byId.get(c.exercise_id)?.kind === 'cardio'
   const doneSets = cards.reduce((k, c) => k + c.rows.filter((r) => r.done).length, 0)
   const doneWarmups = cards.reduce((k, c) => k + c.rows.filter((r) => r.done && r.warmup).length, 0)
   const doneDrops = cards.reduce((k, c) => k + c.rows.filter((r) => r.done && r.dropOf != null).length, 0)
-  const doneHard = doneSets - doneWarmups - doneDrops
+  const doneBouts = cards.filter(cardioCard).flatMap((c) => c.rows.filter((r) => r.done))
+  const doneHard = doneSets - doneWarmups - doneDrops - doneBouts.length
+  const cardioDone = cardioTotals(doneBouts.map((r) => ({ duration_s: parseDuration(r.time) })))
 
   /**
    * Validates a row (blank fields of a working set take their placeholder: last
    * time's matching working set, or the plan) and saves it as a set.
    */
   async function save(c: Card, r: Row, lastTime: LastTime | undefined) {
+    if (cardioCard(c)) return saveBout(c, r, lastTime)
     const e = byId.get(c.exercise_id)
     const head = r.dropOf != null ? c.rows.find((x) => x.n === r.dropOf) : undefined
     if (r.dropOf != null && !head?.done) return updateRow(c.key, r.n, { error: 'Tick the set above first.' })
@@ -187,6 +216,38 @@ function Logger({ log, library }: { log: WorkoutLog; library: LibraryExercise[] 
         weight_kg: kg, reps: repsN, rpe: rpeN, is_warmup: r.warmup, drop_of: r.dropOf,
       })
       updateRow(c.key, r.n, { saving: false, done: true, dirty: false, weight, reps, rpe })
+      refresh()
+    } catch (err) {
+      updateRow(c.key, r.n, { saving: false, error: err instanceof Error ? err.message : 'Could not save. Try again.' })
+    }
+  }
+
+  /**
+   * A cardio bout: a blank time takes the plan's minutes (or last time's), a
+   * blank distance the plan's distance; level, heart rate and RPE are optional.
+   */
+  async function saveBout(c: Card, r: Row, lastTime: LastTime | undefined) {
+    const prev = previousFor(c, r, lastTime)
+    const planned = c.slot?.minutes != null ? Math.round(c.slot.minutes * 60) : prev?.duration_s ?? null
+    const seconds = r.time.trim() ? parseDuration(r.time) : planned
+    if (seconds == null || seconds > 86400) return updateRow(c.key, r.n, { error: 'Time: minutes (30), or minutes and seconds (30:15).' })
+    const metres = r.dist.trim() ? metresFromInput(r.dist, units) : c.slot?.distance_m ?? null
+    if (r.dist.trim() && (metres == null || metres > 1_000_000)) return updateRow(c.key, r.n, { error: `Distance: in ${distanceUnit(units)}, e.g. 5.2.` })
+    const level = r.level.trim() === '' ? null : Number(r.level)
+    if (level != null && !(level >= 0 && level <= 100 && level * 2 === Math.round(level * 2))) return updateRow(c.key, r.n, { error: 'Level or incline: 0 to 100.' })
+    const hr = r.hr.trim() === '' ? null : Number(r.hr)
+    if (hr != null && !(Number.isInteger(hr) && hr >= 30 && hr <= 250)) return updateRow(c.key, r.n, { error: 'Heart rate: 30 to 250 bpm.' })
+    const rpe = r.rpe.trim() === '' ? null : Number(r.rpe)
+    if (rpe != null && (!(rpe >= 1 && rpe <= 10) || rpe * 2 !== Math.round(rpe * 2))) return updateRow(c.key, r.n, { error: 'RPE: 1 to 10, in steps of 0.5.' })
+    updateRow(c.key, r.n, { saving: true, error: null })
+    try {
+      await api.saveSet(log.id, {
+        exercise_id: c.exercise_id, template_exercise_id: c.slot?.template_exercise_id ?? null, set_number: r.n,
+        weight_kg: null, reps: null, rpe, is_warmup: false, drop_of: null, duration_s: seconds, distance_m: metres, level, avg_hr: hr,
+      })
+      updateRow(c.key, r.n, {
+        saving: false, done: true, dirty: false, time: inputFromSeconds(seconds), dist: metres != null ? inputFromMetres(metres, units) : '',
+      })
       refresh()
     } catch (err) {
       updateRow(c.key, r.n, { saving: false, error: err instanceof Error ? err.message : 'Could not save. Try again.' })
@@ -245,7 +306,8 @@ function Logger({ log, library }: { log: WorkoutLog; library: LibraryExercise[] 
 
   const pick = (e: LibraryExercise) => {
     if (picker?.swap) update(picker.swap, (c) => ({ ...c, exercise_id: e.id }))
-    else setCards((cs) => [...cs, { key: `x-${e.id}`, slot: null, exercise_id: e.id, rows: [1, 2, 3].map((n) => emptyRow(n)) }])
+    // A cardio exercise starts with one bout; strength with three sets.
+    else setCards((cs) => [...cs, { key: `x-${e.id}`, slot: null, exercise_id: e.id, rows: (e.kind === 'cardio' ? [1] : [1, 2, 3]).map((n) => emptyRow(n)) }])
     setPicker(null)
   }
 
@@ -258,6 +320,7 @@ function Logger({ log, library }: { log: WorkoutLog; library: LibraryExercise[] 
     },
     onSuccess: () => {
       writeLayout(log.id, null)
+      justFinished.add(log.id)
       refresh()
       qc.invalidateQueries({ queryKey: ['workout', log.id] })
     },
@@ -276,7 +339,7 @@ function Logger({ log, library }: { log: WorkoutLog; library: LibraryExercise[] 
   const elapsed = minutesSince(log.started_at)
   const swapCard = picker?.swap ? cards.find((c) => c.key === picker.swap) : undefined
   const view: LoggerView = {
-    units, byId, last: last.data, updateRow, save, untick, toggleWarmup, addSet, addWarmup, removeLast, addDrop, removeDrop, makeNormal,
+    units, byId, last: last.data, badges, updateRow, save, untick, toggleWarmup, addSet, addWarmup, removeLast, addDrop, removeDrop, makeNormal,
     swap: (c) => setPicker({ swap: c.key }), remove: (c) => setCards((cs) => cs.filter((x) => x.key !== c.key)),
   }
 
@@ -289,6 +352,7 @@ function Logger({ log, library }: { log: WorkoutLog; library: LibraryExercise[] 
           <div className="sub">
             {log.started_at ? `Started ${clockTime(log.started_at)}` : weekday(log.performed_on)}
             {elapsed != null && ` · ${elapsed} min`} · {doneHard} {doneHard === 1 ? 'set' : 'sets'} logged
+            {cardioDone.seconds > 0 && ` + ${minutesText(cardioDone.seconds)} cardio`}
             {doneDrops > 0 && ` + ${doneDrops} drop${doneDrops === 1 ? '' : 's'}`}
             {doneWarmups > 0 && ` + ${doneWarmups} warm-up${doneWarmups === 1 ? '' : 's'}`}
           </div>
@@ -303,7 +367,7 @@ function Logger({ log, library }: { log: WorkoutLog; library: LibraryExercise[] 
       )}
 
       <div className="workout-cards">
-        {supersetBlocks(cards.map((c) => ({ card: c, superset: c.slot?.superset ?? null }))).map((block) => block.label && block.items.length > 1
+        {supersetBlocks(cards.map((c) => ({ card: c, superset: cardioCard(c) ? null : c.slot?.superset ?? null }))).map((block) => block.label && block.items.length > 1
           ? <SupersetBlock key={`ss-${block.label}-${block.items[0].card.key}`} label={block.label} cards={block.items.map((x) => x.card)} view={view} />
           : <ExerciseCard key={block.items[0].card.key} c={block.items[0].card} view={view} />)}
       </div>
@@ -355,6 +419,23 @@ function EffortPicker({ value, onChange }: { value: number | null; onChange: (v:
   )
 }
 
+/** A ticked row as the records see it (what's typed, in kg; a cardio bout's time and metres). */
+function tickedSet(c: Card, r: Row, units: UnitSystem, cardio = false): RecordSet {
+  const w = Number(r.weight)
+  const rpe = Number(r.rpe)
+  if (cardio) {
+    return {
+      exercise_id: c.exercise_id, set_number: r.n, weight_kg: null, reps: null, rpe: null,
+      duration_s: parseDuration(r.time), distance_m: r.dist.trim() ? metresFromInput(r.dist, units) : null,
+    }
+  }
+  return {
+    exercise_id: c.exercise_id, set_number: r.n, weight_kg: r.weight.trim() !== '' && Number.isFinite(w) ? toKg(w, units) : null,
+    reps: r.reps.trim() !== '' && Number.isInteger(Number(r.reps)) ? Number(r.reps) : null,
+    rpe: r.rpe.trim() !== '' && Number.isFinite(rpe) ? rpe : null, is_warmup: r.warmup, drop_of: r.dropOf,
+  }
+}
+
 /** Last time's working set to suggest for this row: the same position among working sets (drops left out), else the last one. */
 function previousFor(c: Card, r: Row, lastTime: LastTime | undefined) {
   const i = c.rows.filter(isHead).findIndex((x) => x.n === r.n)
@@ -375,6 +456,8 @@ interface LoggerView {
   units: UnitSystem
   byId: Map<string, LibraryExercise>
   last: Record<string, LastTime> | undefined
+  /** record kinds by "exerciseId:setNumber" */
+  badges: Map<string, RecordKind[]>
   updateRow: (key: string, n: number, patch: Partial<Row>) => void
   save: (c: Card, r: Row, lastTime: LastTime | undefined) => Promise<void>
   untick: (c: Card, r: Row) => Promise<void>
@@ -402,7 +485,12 @@ function CardHead({ c, view, tag, inSuperset }: { c: Card; view: LoggerView; tag
         <div className="grow" style={{ minWidth: 0 }}>
           <h2 className="ex-name">{e?.name ?? c.slot?.name ?? 'Exercise'}</h2>
           {swappedFrom && <div className="xs muted">Swapped from {swappedFrom} for today</div>}
-          {c.slot && (
+          {c.slot && e?.kind === 'cardio' ? (
+            <div className="small plan-line">
+              {cardioTargetText(c.slot, view.units)}
+              {c.slot.zone && <span className="xs muted zone-hint"> ({ZONE_HINT[c.slot.zone]})</span>}
+            </div>
+          ) : c.slot && (
             <div className="small plan-line">
               {c.slot.sets} × {c.slot.reps}{c.slot.rpe != null && ` · RPE ${c.slot.rpe}`}
               {!inSuperset && c.slot.rest_seconds != null && ` · rest ${restLabel(c.slot.rest_seconds)}`}
@@ -479,6 +567,7 @@ function SetRow({ c, r, view, label }: { c: Card; r: Row; view: LoggerView; labe
           <Check size={20} />
         </button>
         {r.error && <div role="alert" className="set-error xs">{r.error}</div>}
+        {r.done && <RecordBadges kinds={view.badges.get(`${c.exercise_id}:${r.n}`) ?? []} />}
       </div>
       {drop && !r.saving && (
         <div className="drop-actions xs">
@@ -497,6 +586,7 @@ function SetRow({ c, r, view, label }: { c: Card; r: Row; view: LoggerView; labe
 
 function ExerciseCard({ c, view }: { c: Card; view: LoggerView }) {
   const e = view.byId.get(c.exercise_id)
+  if (e?.kind === 'cardio') return <CardioCard c={c} view={view} />
   return (
     <section className="card ex-card">
       <CardHead c={c} view={view} />
@@ -508,6 +598,75 @@ function ExerciseCard({ c, view }: { c: Card; view: LoggerView }) {
         <button type="button" className="btn btn-ghost btn-sm" onClick={() => view.addSet(c)}><Plus size={16} /> Add set</button>
         <button type="button" className="btn btn-ghost btn-sm" onClick={() => view.addWarmup(c)}><Plus size={16} /> Warm-up</button>
         {c.rows.length > 0 && <button type="button" className="btn btn-ghost btn-sm" onClick={() => void view.removeLast(c)}><Minus size={16} /> Remove set</button>}
+      </div>
+    </section>
+  )
+}
+
+/**
+ * A cardio exercise: one row per bout or round (time, distance, RPE), with
+ * level or incline and heart rate under "More details". No warm-ups or drops.
+ */
+function CardioCard({ c, view }: { c: Card; view: LoggerView }) {
+  const e = view.byId.get(c.exercise_id)
+  const { units } = view
+  const lastTime = view.last?.[c.exercise_id]
+  const [details, setDetails] = useState(() => c.rows.some((r) => r.level || r.hr))
+  const rounds = c.rows.length
+  return (
+    <section className="card ex-card cardio-card">
+      <CardHead c={c} view={view} />
+      <div className="set-grid" role="table" aria-label={`${e?.name ?? 'Cardio'} rounds`}>
+        <div className="set-row set-head" role="row">
+          <span role="columnheader">#</span>
+          <span role="columnheader">Time</span>
+          <span role="columnheader">{distanceUnit(units)}</span>
+          <span role="columnheader">RPE</span>
+          <span role="columnheader" className="sr-only">Done</span>
+        </div>
+        {c.rows.map((r, i) => {
+          const name = rounds > 1 ? `Round ${i + 1}` : 'Bout'
+          const prev = previousFor(c, r, lastTime)
+          const timeHint = c.slot?.minutes != null ? inputFromSeconds(Math.round(c.slot.minutes * 60)) : prev?.duration_s != null ? inputFromSeconds(prev.duration_s) : 'min'
+          const distHint = c.slot?.distance_m != null ? inputFromMetres(c.slot.distance_m, units) : prev?.distance_m != null ? inputFromMetres(prev.distance_m, units) : '–'
+          const field = (f: 'time' | 'dist' | 'rpe' | 'level' | 'hr', what: string, placeholder: string, mode: 'decimal' | 'numeric', extra: Partial<React.InputHTMLAttributes<HTMLInputElement>> = {}) => (
+            <input className="input set-input" inputMode={mode} aria-label={`${name} ${what}`} placeholder={r.done ? '–' : placeholder} value={r[f]} disabled={r.saving}
+              {...extra}
+              onChange={(ev) => view.updateRow(c.key, r.n, { ...({ [f]: ev.target.value } as Pick<Row, typeof f>), dirty: r.done, error: null })}
+              onBlur={() => { if (r.done && r.dirty) void view.save(c, r, lastTime) }} />
+          )
+          return (
+            <div key={r.n} className={`set-row${r.done ? ' done' : ''}`} role="row">
+              <span className="set-n num" aria-hidden="true">{i + 1}</span>
+              {field('time', 'time, minutes or mm:ss', timeHint, 'decimal', { type: 'text', autoComplete: 'off' })}
+              {field('dist', `distance in ${distanceUnit(units)}`, distHint, 'decimal', { type: 'number', step: '0.01', min: '0' })}
+              {field('rpe', 'RPE', '–', 'decimal', { type: 'number', step: '0.5', min: '1', max: '10' })}
+              <button type="button" className="set-tick" aria-pressed={r.done} aria-label={r.done ? `Undo ${name.toLowerCase()}` : `${name} done`}
+                disabled={r.saving} onClick={() => void (r.done ? view.untick(c, r) : view.save(c, r, lastTime))}>
+                <Check size={20} />
+              </button>
+              {details && (
+                <div className="cardio-more">
+                  <label className="xs muted">Level or incline{field('level', 'level or incline', '–', 'decimal', { type: 'number', step: '0.5', min: '0', max: '100' })}</label>
+                  <label className="xs muted">Avg heart rate{field('hr', 'average heart rate, bpm', 'bpm', 'numeric', { type: 'number', step: '1', min: '30', max: '250' })}</label>
+                </div>
+              )}
+              {r.error && <div role="alert" className="set-error xs">{r.error}</div>}
+              {r.done && <RecordBadges kinds={view.badges.get(`${c.exercise_id}:${r.n}`) ?? []} />}
+            </div>
+          )
+        })}
+      </div>
+      {c.rows.some((r) => r.done && r.dist.trim()) && (
+        <p className="xs muted cardio-total">
+          Total: {minutesText(cardioTotals(c.rows.filter((r) => r.done).map((r) => ({ duration_s: parseDuration(r.time) }))).seconds)}
+          {' · '}{distanceText(c.rows.filter((r) => r.done).reduce((a, r) => a + (metresFromInput(r.dist, units) ?? 0), 0), units)}
+        </p>
+      )}
+      <div className="row set-actions">
+        <button type="button" className="btn btn-ghost btn-sm" onClick={() => view.addSet(c)}><Plus size={16} /> Add round</button>
+        {c.rows.length > 0 && <button type="button" className="btn btn-ghost btn-sm" onClick={() => void view.removeLast(c)}><Minus size={16} /> Remove round</button>}
+        <button type="button" className="btn btn-ghost btn-sm" aria-pressed={details} onClick={() => setDetails(!details)}>{details ? 'Fewer details' : 'More details'}</button>
       </div>
     </section>
   )
@@ -559,6 +718,29 @@ const restLabel = (s: number) => (s >= 60 ? `${Math.round((s / 60) * 10) / 10} m
 
 // ---------- Finished ----------
 
+/** Workouts finished in this tab just now: their summary opens with the celebration (if it's on). */
+const justFinished = new Set<string>()
+
+/** "2 new personal records", each listed; a brief, calm moment right after Finish unless turned off in Settings. */
+function RecordsCard({ log }: { log: WorkoutLog }) {
+  const [celebrations] = useCelebrations()
+  const [fresh] = useState(() => justFinished.delete(log.id))
+  const shown = visibleRecords(log.records, log.units)
+  if (!shown.length) return null
+  return (
+    <section className={`card records-card${fresh && celebrations ? ' celebrate' : ''}`} aria-live="polite">
+      <div className="records-head">
+        <span className="records-icon" aria-hidden="true"><Award size={20} /></span>
+        <div>
+          <h2 style={{ fontSize: 18 }}>{recordCount(shown.length)}</h2>
+          <div className="small muted">New record. Nice work.</div>
+        </div>
+      </div>
+      <RecordList records={shown} units={log.units} />
+    </section>
+  )
+}
+
 /** The planned supersets this workout had, by exercise name (swaps for today included). */
 function supersetsOf(log: WorkoutLog, byId: Map<string, LibraryExercise>): string[][] {
   const groups = new Map<string, string[]>()
@@ -577,7 +759,9 @@ function Summary({ log, library }: { log: WorkoutLog; library: LibraryExercise[]
   // Counts, volume and muscles are working sets only; warm-ups are listed, greyed.
   const s = summarize(
     { id: log.id, name: log.name, performed_on: log.performed_on, finished: true, duration_min: log.duration_min, notes: log.notes || null, effort: log.effort },
-    sorted.filter((x) => !x.is_warmup).map((x) => ({ ...x, name: byId.get(x.exercise_id)?.name ?? 'Exercise', primary: byId.get(x.exercise_id)?.primary ?? [] })),
+    sorted.filter((x) => !x.is_warmup).map((x) => ({
+      ...x, name: byId.get(x.exercise_id)?.name ?? 'Exercise', primary: byId.get(x.exercise_id)?.primary ?? [], cardio: byId.get(x.exercise_id)?.kind === 'cardio',
+    })),
   )
   const warmups = (exerciseName: string) => sorted.filter((x) => x.is_warmup && (byId.get(x.exercise_id)?.name ?? 'Exercise') === exerciseName)
   const warmupOnly = [...new Set(sorted.filter((x) => x.is_warmup).map((x) => byId.get(x.exercise_id)?.name ?? 'Exercise'))]
@@ -591,11 +775,15 @@ function Summary({ log, library }: { log: WorkoutLog; library: LibraryExercise[]
           <div className="sub">Finished · {weekday(log.performed_on)} {monthDay(log.performed_on)}</div>
         </div>
       </header>
+      <RecordsCard log={log} />
       <section className="card summary-card">
         <div className="summary-tiles">
           <div className="tile"><span className="xs muted">Duration</span><b className="num">{s.duration_min != null ? `${s.duration_min} min` : '—'}</b></div>
           <div className="tile"><span className="xs muted">Sets</span><b className="num">{s.sets}</b></div>
           <div className="tile"><span className="xs muted">Volume</span><b className="num">{s.volume_kg > 0 ? volumeLabel(s.volume_kg, log.units) : '—'}</b></div>
+          {(s.cardio_s ?? 0) > 0 && (
+            <div className="tile"><span className="xs muted">Cardio</span><b className="num">{minutesText(s.cardio_s!)}{s.cardio_m ? ` · ${distanceText(s.cardio_m, log.units)}` : ''}</b></div>
+          )}
           <div className="tile"><span className="xs muted">Muscles hit</span><b className="num">{s.muscles.length}</b></div>
           <div className="tile"><span className="xs muted">Effort</span><b className="num">{log.effort != null ? `${log.effort} / 10` : '—'}</b></div>
         </div>

@@ -10,18 +10,21 @@ import { ApiError, backend, uploadPhoto } from '../backend'
 import { addDays, parseDate, today, weekStart } from '../dates'
 import {
   avg, dayBounds, db, lastCoachMessage, localDate, must, myId, nextCheckInDate, person, plannedMeals,
-  programWeek, round1, sessionSummaries, targetsFromRow, sessionSummary, SESSION_SUMMARY_COLS, signedUrls, targetsOn, weekMonday,
+  programWeek, recordsOf, round1, sessionSummaries, targetsFromRow, sessionSummary, SESSION_SUMMARY_COLS, signedUrls, targetsOn, weekMonday,
 } from './shared'
+import { recordBests, saveRecords } from './records'
 import { inSetOrder, minutesSince, OWN_WORKOUT, weekPlan, workoutsDone, type PlanTemplate } from '../workouts'
 import { isTrainingDay, type MealItem } from '../meals'
 import { dayPlan } from './mealplans'
 import { progressFrom, rawFrom, type Period, type ProgressDetail, type ProgressRaw } from '../progress'
+import { cardioTargetText, isCardioTarget, type CardioZone } from '../cardio'
 
 // ---------- Who am I ----------
 
 interface TemplateExercise {
   id: string; position: number; target_sets: number; target_reps: string; target_rpe: number | null; rest_seconds: number | null
   exercise_id: string; name: string; cue: string | null; notes: string | null; superset: string | null
+  minutes: number | null; distance_m: number | null; zone: CardioZone | null
 }
 interface Template { id: string; name: string; day_of_week: number | null; position: number; notes: string | null; exercises: TemplateExercise[] }
 interface Program { id: string; name: string; start_date: string; weeks: number; templates: Template[] }
@@ -57,7 +60,7 @@ async function loadMe(): Promise<Me> {
     prof.coach_id ? db().from('users').select('id, full_name').eq('id', prof.coach_id).maybeSingle() : null,
     // The latest assigned program that has started (RLS hides drafts); removed workouts and exercises left out (0015).
     db().from('programs')
-      .select('id, name, start_date, weeks, workout_templates(id, name, day_of_week, position, notes, template_exercises(id, position, target_sets, target_reps, target_rpe, rest_seconds, notes, superset_group, exercise_id, exercises(name, cue)))')
+      .select('id, name, start_date, weeks, workout_templates(id, name, day_of_week, position, notes, template_exercises(id, position, target_sets, target_reps, target_rpe, rest_seconds, notes, superset_group, target_minutes, target_distance_m, target_zone, exercise_id, exercises(name, cue)))')
       .eq('client_id', uid)
       .lte('start_date', today())
       .is('workout_templates.removed_at', null)
@@ -92,6 +95,9 @@ async function loadMe(): Promise<Me> {
             target_rpe: x.target_rpe != null ? Number(x.target_rpe) : null, rest_seconds: x.rest_seconds,
             exercise_id: x.exercise_id, name: x.exercises?.name ?? 'Exercise', cue: x.exercises?.cue ?? null, notes: x.notes ?? null,
             superset: x.superset_group ?? null,
+            minutes: x.target_minutes != null ? Number(x.target_minutes) : null,
+            distance_m: x.target_distance_m != null ? Number(x.target_distance_m) : null,
+            zone: x.target_zone ?? null,
           })),
       })).sort((a: Template, b: Template) => a.position - b.position),
     } : null,
@@ -179,6 +185,7 @@ function planned(t: Template, swaps: Swaps): PlanTemplate {
       return {
         template_exercise_id: x.id, exercise_id: sw?.id ?? x.exercise_id, name: sw?.name ?? x.name, cue: sw ? sw.cue : x.cue,
         sets: x.target_sets, reps: x.target_reps, rpe: x.target_rpe, rest_seconds: x.rest_seconds, notes: x.notes, superset: x.superset,
+        minutes: x.minutes, distance_m: x.distance_m, zone: x.zone,
       }
     }),
   }
@@ -196,7 +203,10 @@ async function todaysWorkout(me: Me, date: string, sessions: SessionRow[]): Prom
   return {
     name: t.name,
     duration_min: null,
-    exercises: t.exercises.map((x) => ({ name: swaps[x.id]?.name ?? x.name, sets: x.target_sets, reps: x.target_reps })),
+    exercises: t.exercises.map((x) => ({
+      name: swaps[x.id]?.name ?? x.name, sets: x.target_sets, reps: x.target_reps,
+      plan: isCardioTarget(x) ? cardioTargetText({ sets: x.target_sets, minutes: x.minutes, distance_m: x.distance_m, zone: x.zone, rest_seconds: x.rest_seconds }, me.units) : undefined,
+    })),
     sets_done: done,
     sets_total: t.exercises.reduce((n, x) => n + x.target_sets, 0),
   }
@@ -257,7 +267,7 @@ async function home(): Promise<ClientHome> {
   const t = today()
   const ws = weekStart(t)
   const week = programWeek(me.start_date, t)
-  const [logs, meals, sessions, latest, food, note, best] = await Promise.all([
+  const [logs, meals, sessions, latest, food, note, best, recentRecords] = await Promise.all([
     dailyLogs(me.id, addDays(me.start_date < ws ? me.start_date : ws, -7)),
     mealsBetween(me.id, ws, addDays(ws, 7)),
     sessionsBetween(me.id, ws, addDays(ws, 6)),
@@ -265,6 +275,7 @@ async function home(): Promise<ClientHome> {
     foodDay(t, me),
     lastCoachMessage(me.id, me.coach),
     bests(me.id),
+    recordsOf(me.id, { from: addDays(t, -6) }),
   ])
 
   const planned = plannedMeals(me.meals_per_day)
@@ -343,6 +354,7 @@ async function home(): Promise<ClientHome> {
     },
     coach_note: note,
     bests: best,
+    recent_records: recentRecords,
   }
 }
 
@@ -475,7 +487,7 @@ async function setBodyModel(model: BodyModel) {
 function toLibrary(r: any): LibraryExercise {
   const muscles = (r.exercise_muscles ?? []) as { muscle: MuscleGroup; role: 'primary' | 'secondary' }[]
   return {
-    id: r.id, name: r.name, level: r.level, equipment: r.equipment ?? '', cue: r.cue ?? null, custom: r.created_by != null,
+    id: r.id, name: r.name, level: r.level, equipment: r.equipment ?? '', cue: r.cue ?? null, custom: r.created_by != null, kind: r.kind ?? 'strength',
     primary: muscles.filter((m) => m.role === 'primary').map((m) => m.muscle),
     secondary: muscles.filter((m) => m.role === 'secondary').map((m) => m.muscle),
   }
@@ -483,7 +495,7 @@ function toLibrary(r: any): LibraryExercise {
 
 async function exerciseLibrary(): Promise<LibraryExercise[]> {
   // RLS returns the shared library plus the coach's own exercises.
-  const rows = must(await db().from('exercises').select('id, name, level, equipment, cue, created_by, exercise_muscles(muscle, role)').order('name'))
+  const rows = must(await db().from('exercises').select('id, name, level, equipment, cue, created_by, kind, exercise_muscles(muscle, role)').order('name'))
   return (rows as any[]).map(toLibrary)
 }
 
@@ -523,7 +535,7 @@ async function startWorkout(templateId: string | null): Promise<{ id: string }> 
 async function workoutLog(id: string): Promise<WorkoutLog> {
   const me = await loadMe()
   const s: any = must(await db().from('workout_sessions')
-    .select('id, workout_template_id, performed_on, started_at, finished_at, duration_min, notes, effort, workout_templates(name), set_logs(exercise_id, template_exercise_id, set_number, reps, weight_kg, rpe, is_warmup, drop_of)')
+    .select('id, workout_template_id, performed_on, started_at, finished_at, duration_min, notes, effort, workout_templates(name), set_logs(exercise_id, template_exercise_id, set_number, reps, weight_kg, rpe, is_warmup, drop_of, duration_s, distance_m, level, avg_hr)')
     .eq('id', id).eq('client_id', me.id).maybeSingle())
   if (!s) throw new ApiError(404, "That workout doesn't exist.")
   const template = me.program?.templates.find((x) => x.id === s.workout_template_id)
@@ -545,7 +557,9 @@ async function workoutLog(id: string): Promise<WorkoutLog> {
     sets: (s.set_logs ?? []).map((l: any): SetWrite => ({
       exercise_id: l.exercise_id, template_exercise_id: l.template_exercise_id, set_number: l.set_number,
       reps: l.reps, weight_kg: n(l.weight_kg), rpe: n(l.rpe), is_warmup: !!l.is_warmup, drop_of: l.drop_of ?? null,
+      ...(l.duration_s != null ? { duration_s: l.duration_s, distance_m: n(l.distance_m), level: n(l.level), avg_hr: l.avg_hr } : {}),
     })),
+    records: s.finished_at ? await recordsOf(me.id, { sessionIds: [s.id] }) : [],
   }
 }
 
@@ -554,7 +568,7 @@ async function lastTime(sessionId: string, exerciseIds: string[]): Promise<Recor
   if (!exerciseIds.length) return {}
   const uid = await myId()
   const rows = must(await db().from('set_logs')
-    .select('exercise_id, set_number, reps, weight_kg, rpe, drop_of, session_id, workout_sessions!inner(client_id, performed_on, started_at)')
+    .select('exercise_id, set_number, reps, weight_kg, rpe, drop_of, duration_s, distance_m, level, avg_hr, session_id, workout_sessions!inner(client_id, performed_on, started_at)')
     .eq('workout_sessions.client_id', uid).in('exercise_id', exerciseIds).neq('session_id', sessionId).eq('is_warmup', false)
     .limit(1000)) as any[]
   const latest: Record<string, { key: string; session: string; date: string; sets: LastTime['sets'] }> = {}
@@ -566,7 +580,11 @@ async function lastTime(sessionId: string, exerciseIds: string[]): Promise<Recor
   for (const r of rows) {
     const cur = latest[r.exercise_id]
     if (cur?.session === r.session_id) {
-      cur.sets.push({ set_number: r.set_number, reps: r.reps, weight_kg: r.weight_kg == null ? null : Number(r.weight_kg), rpe: r.rpe == null ? null : Number(r.rpe), drop_of: r.drop_of ?? null })
+      const n = (x: unknown) => (x == null ? null : Number(x))
+      cur.sets.push({
+        set_number: r.set_number, reps: r.reps, weight_kg: n(r.weight_kg), rpe: n(r.rpe), drop_of: r.drop_of ?? null,
+        ...(r.duration_s != null ? { duration_s: r.duration_s, distance_m: n(r.distance_m), level: n(r.level), avg_hr: r.avg_hr } : {}),
+      })
     }
   }
   return Object.fromEntries(Object.entries(latest).map(([k, v]) => [k, { date: v.date, sets: inSetOrder(v.sets) }]))
@@ -577,6 +595,7 @@ async function saveSet(sessionId: string, set: SetWrite) {
     session_id: sessionId, exercise_id: set.exercise_id, template_exercise_id: set.template_exercise_id,
     set_number: set.set_number, reps: set.reps, weight_kg: set.weight_kg, rpe: set.rpe, is_warmup: set.is_warmup ?? false,
     set_kind: set.drop_of != null ? 'drop' : 'normal', drop_of: set.drop_of ?? null,
+    duration_s: set.duration_s ?? null, distance_m: set.distance_m ?? null, level: set.level ?? null, avg_hr: set.avg_hr ?? null,
   }, { onConflict: 'session_id,exercise_id,set_number' }))
   return { ok: true }
 }
@@ -599,8 +618,15 @@ async function finishWorkout(id: string, effort: number | null): Promise<Workout
     must(await db().from('workout_sessions')
       .update({ finished_at: new Date().toISOString(), duration_min: minutesSince(s.started_at), status: 'done', effort: effortOrNull(effort) })
       .eq('id', id))
+    // The workout is saved either way; if its records can't be saved now, the badges still show from the sets.
+    try {
+      await saveRecords(id)
+    } catch {
+      /* not saved this time */
+    }
   }
-  return sessionSummary(must(await db().from('workout_sessions').select(SESSION_SUMMARY_COLS).eq('id', id).single()))
+  const summary = sessionSummary(must(await db().from('workout_sessions').select(SESSION_SUMMARY_COLS).eq('id', id).single()))
+  return { ...summary, records: await recordsOf(await myId(), { sessionIds: [id] }) }
 }
 
 /** A whole number 1–10, or null (the column's check would reject anything else). */
@@ -772,17 +798,18 @@ export async function progressRawFor(uid: string, period: Period): Promise<Progr
   const prof: any = must(await db().from('client_profiles').select('start_date, goal_weight_kg').eq('user_id', uid).maybeSingle())
   if (!prof) throw new ApiError(404, "That client isn't one of yours.")
   const from = rawFrom(period, t, prof.start_date)
-  const [days, meals, targets, programs, sessions, checkIns] = await Promise.all([
+  const [days, meals, targets, programs, sessions, checkIns, records] = await Promise.all([
     db().from('daily_logs').select('log_date, weight_kg, steps, water_ml, sleep_hours').eq('client_id', uid).gte('log_date', from).lte('log_date', t),
     db().from('meal_logs').select('eaten_at, calories, protein_g, on_plan').eq('client_id', uid).gte('eaten_at', dayBounds(from)[0]),
     db().from('nutrition_targets').select('calories, protein_g, water_ml, steps, sleep_hours, effective_from').eq('client_id', uid),
     // Assigned programs only: a coach can also see their drafts.
     db().from('programs').select('start_date, weeks, workout_templates(day_of_week, removed_at)').eq('client_id', uid).not('assigned_at', 'is', null).lte('start_date', t),
     db().from('workout_sessions')
-      .select('performed_on, workout_template_id, set_logs(exercise_id, reps, weight_kg, rpe, is_warmup, drop_of, exercises(name, exercise_muscles(muscle, role)))')
+      .select('performed_on, workout_template_id, set_logs(exercise_id, reps, weight_kg, rpe, is_warmup, drop_of, duration_s, distance_m, exercises(name, exercise_muscles(muscle, role)))')
       .eq('client_id', uid).gte('performed_on', from).not('finished_at', 'is', null).neq('status', 'skipped'),
     db().from('check_ins').select('week_start, waist_cm, hips_cm, energy, sleep, stress, hunger')
       .eq('client_id', uid).in('status', ['submitted', 'reviewed']).gte('week_start', from),
+    recordsOf(uid),
   ])
   const n = (x: unknown) => (x == null ? null : Number(x))
   return {
@@ -803,12 +830,14 @@ export async function progressRawFor(uid: string, period: Period): Promise<Progr
       template_id: s.workout_template_id,
       sets: (s.set_logs ?? []).filter((l: any) => !l.is_warmup).map((l: any) => ({
         exercise_id: l.exercise_id, name: l.exercises?.name ?? 'Exercise', kg: n(l.weight_kg), reps: l.reps, rpe: n(l.rpe), drop: l.drop_of != null,
+        duration_s: l.duration_s ?? null, distance_m: n(l.distance_m),
         primary: (l.exercises?.exercise_muscles ?? []).filter((m: any) => m.role === 'primary').map((m: any) => m.muscle as MuscleGroup),
       })),
     })),
     check_ins: (must(checkIns) as any[]).map((c) => ({
       week_start: c.week_start, waist_cm: n(c.waist_cm), hips_cm: n(c.hips_cm), energy: c.energy, sleep: c.sleep, stress: c.stress, hunger: c.hunger,
     })),
+    records,
   }
 }
 
@@ -832,5 +861,5 @@ export const liveClient = {
   progressDetail, clientProgress, clientMeals,
   home, trainWeek, muscle, foodDay: (date: string) => foodDay(date), rateDay, logMeal, logDaily,
   checkinDraft, saveCheckin, submitCheckin, progress, setBodyModel,
-  exerciseLibrary, startWorkout, workoutLog, lastTime, saveSet, deleteSet, saveWorkoutNote, finishWorkout, discardWorkout, skipWorkout, undoSkip,
+  exerciseLibrary, startWorkout, workoutLog, lastTime, recordBests, saveSet, deleteSet, saveWorkoutNote, finishWorkout, discardWorkout, skipWorkout, undoSkip,
 }

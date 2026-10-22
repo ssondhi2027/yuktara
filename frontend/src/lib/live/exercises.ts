@@ -19,7 +19,7 @@ function check<T>(res: { data: T | null; error: { code?: string; message: string
 }
 
 async function save(d: ExerciseDraft): Promise<{ id: string }> {
-  const body = { id: d.id, name: d.name.trim(), level: d.level, equipment: d.equipment.trim(), cue: d.cue.trim(), primary: d.primary, secondary: d.secondary }
+  const body = { id: d.id, name: d.name.trim(), level: d.level, equipment: d.equipment.trim(), cue: d.cue.trim(), primary: d.primary, secondary: d.secondary, kind: d.kind }
   return { id: check(await db().rpc('save_exercise', { e: body })) as string }
 }
 

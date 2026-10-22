@@ -107,3 +107,10 @@ button.set-n:hover { background: var(--surface-2); }
 .ss-round { margin-top: 6px; padding-top: 6px; border-top: 1px dashed var(--line-strong); font-weight: 700; color: var(--ink-2); text-transform: uppercase; letter-spacing: .04em; }
 .ss-row-tag { color: var(--ink-2); font-weight: 600; padding-left: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ss-note { margin: 10px 0 0; color: var(--ink-2); }
+
+/* Cardio: rounds of time, distance and RPE; level and heart rate under "More details". */
+.cardio-card .set-n { display: grid; place-items: center; font-weight: 700; color: var(--ink-2); }
+.cardio-more { grid-column: 2 / -1; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.cardio-more label { display: grid; gap: 2px; }
+.cardio-total { margin: 8px 0 0; }
+.zone-hint { white-space: normal; }

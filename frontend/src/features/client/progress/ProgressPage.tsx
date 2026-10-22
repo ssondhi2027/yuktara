@@ -1,13 +1,13 @@
-import { createContext, useContext, useState } from 'react'
+import { createContext, useContext, useMemo, useState } from 'react'
 import { Link } from 'react-router'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { ArrowDown, ArrowRight, ArrowUp } from 'lucide-react'
 import { api, type Period, type ProgressDetail } from '@/lib/api'
 import { monthDay, weekday } from '@/lib/dates'
 import { MUSCLE_LABEL } from '@/lib/muscles'
-import { pctOf, plusDays, trend, type Kpi } from '@/lib/progress'
+import { liftSummary, liftValues, MAX_CHART_LIFTS, pctOf, pickLifts, plusDays, toggleLift, trend, type Kpi, type LiftMeasure } from '@/lib/progress'
 import { monthDayOf } from '@/lib/insights'
-import { bodyValue, bodyWeight, cmToIn, int, litres, loadValue, unitLabel, weightChange } from '@/lib/units'
+import { bodyValue, bodyWeight, cmToIn, delta, int, litres, loadValue, toUnit, unitLabel, weightChange } from '@/lib/units'
 import type { UnitSystem } from '@/types/db'
 import { useLayout } from '@/app/hooks'
 import { useUnits } from '@/app/auth'
@@ -18,6 +18,9 @@ import { Segmented } from '@/components/ui/Segmented'
 import { PageError, PageLoading } from '@/components/ui/Loading'
 import './progress.css'
 import { Avatar } from '@/components/ui/Avatar'
+import { RecordList } from '@/components/records/Records'
+import { distanceText, minutesText } from '@/lib/cardio'
+import { recordTitle, visibleRecords } from '@/lib/records'
 
 const PERIODS: { value: Period; label: string }[] = [
   { value: 'p4', label: '4 weeks' },
@@ -78,10 +81,13 @@ export function ProgressPage() {
           <div className="page-date">Since {monthDay(p.start_date)} · week {p.week}{p.weeks ? ` of ${p.weeks}` : ''}</div>
           <h1>Progress</h1>
         </div>
-        <Segmented label="Period" value={period} onChange={setPeriod} options={PERIODS} />
+        <div className="period-pick">
+          {detail.isPlaceholderData && <span className="xs muted" role="status">Updating…</span>}
+          <Segmented label="Period" value={period} onChange={setPeriod} options={PERIODS} />
+        </div>
       </header>
 
-      <ProgressDashboard d={d} units={units} layout={layout} />
+      <ProgressDashboard d={d} units={units} layout={layout} updating={detail.isPlaceholderData} />
 
       {p.coach_note && (
         <section className="card dark coach-note-p">
@@ -113,9 +119,20 @@ const useVoice = () => useContext(VoiceContext)
  *  tablet  — KPIs three across; charts in two columns, Insights next to the weight chart
  *  desktop — KPIs in one row; the weight chart large and Insights beside it
  */
-export function ProgressDashboard({ d, units, layout, voice = 'client' }: { d: ProgressDetail; units: UnitSystem; layout: 'phone' | 'tablet' | 'desktop'; voice?: 'client' | 'coach' }) {
+export function ProgressDashboard({ d, units, layout, voice = 'client', updating = false }: {
+  d: ProgressDetail; units: UnitSystem; layout: 'phone' | 'tablet' | 'desktop'; voice?: 'client' | 'coach'
+  /** another period is loading: the numbers shown are the previous period's */
+  updating?: boolean
+}) {
   const [section, setSection] = useState<Section>('weight')
   const phone = layout === 'phone'
+  // Phones: a KPI opens its chart group.
+  const open = (s: Section) => {
+    setSection(s)
+    const charts = document.getElementById('progress-charts')
+    const still = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+    charts?.scrollIntoView({ behavior: still ? 'auto' : 'smooth', block: 'start' })
+  }
   const cards: Record<Section, React.ReactNode[]> = {
     weight: phone
       ? [<SignalsCard key="s" d={d} units={units} voice={voice} />, <WeightCard key="w" d={d} units={units} big={false} />]
@@ -125,6 +142,8 @@ export function ProgressDashboard({ d, units, layout, voice = 'client' }: { d: P
       <VolumeCard key="t2" d={d} units={units} />,
       <MusclesCard key="t3" d={d} />,
       <StrengthCard key="t4" d={d} units={units} />,
+      <RecordsCard key="t5" d={d} units={units} />,
+      <CardioCard key="t6" d={d} units={units} />,
     ],
     nutrition: [<CaloriesCard key="n1" d={d} />, <ProteinCard key="n2" d={d} />, <OnPlanCard key="n3" d={d} />],
     habits: [<StepsCard key="h1" d={d} />, <WaterCard key="h2" d={d} />, <SleepCard key="h3" d={d} />],
@@ -132,25 +151,57 @@ export function ProgressDashboard({ d, units, layout, voice = 'client' }: { d: P
   }
   return (
     <VoiceContext.Provider value={voice}>
-      <Kpis d={d} units={units} />
-      {phone ? (
-        <>
-          <div className="section-tabs">
-            <Segmented label="Charts" block value={section} onChange={setSection} options={SECTIONS} />
-          </div>
-          <div className="chart-stack">{cards[section]}</div>
-        </>
-      ) : (
-        <div className="chart-grid">
-          {cards.weight}
-          {cards.training}
-          {cards.nutrition}
-          {cards.habits}
-          {cards.checkins}
+      <LiftFilterProvider>
+        <div className={`progress-dash${updating ? ' updating' : ''}`} aria-busy={updating}>
+          <Kpis d={d} units={units} onOpen={phone ? open : undefined} />
+          {phone ? (
+            <>
+              <div className="section-tabs" id="progress-charts">
+                <Segmented label="Charts" block value={section} onChange={setSection} options={SECTIONS} />
+              </div>
+              <div className="chart-stack">{cards[section]}</div>
+            </>
+          ) : (
+            <div className="chart-grid" id="progress-charts">
+              {cards.weight}
+              {cards.training}
+              {cards.nutrition}
+              {cards.habits}
+              {cards.checkins}
+            </div>
+          )}
         </div>
-      )}
+      </LiftFilterProvider>
     </VoiceContext.Provider>
   )
+}
+
+// ---------- Strength filters ----------
+// Which lifts the strength chart shows, and as what. The records card follows
+// the same lifts. Shared by the cards inside a LiftFilterProvider (the
+// dashboard, the coach's Training tab); a card on its own keeps its own.
+
+interface LiftFilterValue { chosen: string[] | null; measure: LiftMeasure; forecast: boolean }
+type LiftFilterState = LiftFilterValue & { set: (p: Partial<LiftFilterValue>) => void }
+const LiftFilterContext = createContext<LiftFilterState | null>(null)
+
+function useLiftFilterState(initial?: Partial<LiftFilterValue>): LiftFilterState {
+  const [v, setV] = useState<LiftFilterValue>(() => ({ chosen: null, measure: 'e1rm', forecast: true, ...initial }))
+  return useMemo(() => ({ ...v, set: (p: Partial<LiftFilterValue>) => setV((x) => ({ ...x, ...p })) }), [v])
+}
+
+/** `initial`: where the filters start (the default is the main lifts as estimated 1RM, with the estimate ahead). */
+export function LiftFilterProvider({ initial, children }: { initial?: Partial<LiftFilterValue>; children: React.ReactNode }) {
+  return <LiftFilterContext.Provider value={useLiftFilterState(initial)}>{children}</LiftFilterContext.Provider>
+}
+
+/** The lifts to chart (chosen ones still in the period, else the main lifts) and how to show them. */
+function useLiftFilter(d: ProgressDetail) {
+  const shared = useContext(LiftFilterContext)
+  const local = useLiftFilterState()
+  const f = shared ?? local
+  const ids = pickLifts(d.lifts, f.chosen, d.strength.map((l) => l.exercise_id))
+  return { ...f, ids, toggle: (id: string) => f.set({ chosen: toggleLift(ids, id) }) }
 }
 
 // ---------- KPIs ----------
@@ -166,9 +217,13 @@ function Arrow({ k, flat = 0, label }: { k: Kpi; flat?: number; label: string })
   )
 }
 
-function KpiCard({ title, value, k, prevLabel, flat, line, note }: { title: string; value: string | null; k: Kpi; prevLabel: string; flat?: number; line: string; note?: string | null }) {
-  return (
-    <div className="card kpi">
+function KpiCard({ title, value, k, prevLabel, flat, line, note, onOpen }: {
+  title: string; value: string | null; k: Kpi; prevLabel: string; flat?: number; line: string; note?: string | null
+  /** phones: opens this KPI's charts */
+  onOpen?: () => void
+}) {
+  const body = (
+    <>
       <div className="kpi-title xs muted">{title}</div>
       <div className="kpi-value">
         <b className="num">{value ?? '—'}</b>
@@ -176,37 +231,48 @@ function KpiCard({ title, value, k, prevLabel, flat, line, note }: { title: stri
       </div>
       <div className="kpi-line xs">{line}</div>
       {note && <div className="kpi-note xs">{note}</div>}
-    </div>
+    </>
   )
+  return onOpen
+    ? <button type="button" className="card kpi kpi-btn" onClick={onOpen} aria-label={`${title}: ${value ?? 'no data'}. Show the charts`}>{body}</button>
+    : <div className="card kpi">{body}</div>
 }
 
-function Kpis({ d, units }: { d: ProgressDetail; units: UnitSystem }) {
+function Kpis({ d, units, onOpen }: { d: ProgressDetail; units: UnitSystem; onOpen?: (s: Section) => void }) {
   const k = d.kpis
   const u = unitLabel(units)
   const w = k.weight
+  const go = (s: Section) => (onOpen ? () => onOpen(s) : undefined)
+  const steady = d.strength.filter((l) => l.plateau)
+  const records = visibleRecords(d.records, units).filter((r) => r.kind !== 'milestone').length
+  const cardioS = d.training.weekly.reduce((a, x) => a + x.cardio_s, 0)
   const of = (v: number | null | undefined, t: number | null | undefined) => (v != null && t ? `${pctOf(v, t)}% of ` : '')
   return (
     <div className="kpis">
-      <KpiCard title="Weight (weekly average)" k={w} flat={0.2} prevLabel={w.previous != null ? bodyWeight(w.previous, units) : ''}
+      <KpiCard title="Weight (weekly average)" onOpen={go('weight')} k={w} flat={0.2} prevLabel={w.previous != null ? bodyWeight(w.previous, units) : ''}
         note={d.weight.plateau ? `Steady for ${d.weight.plateau.weeks} weeks, since ${monthDay(d.weight.plateau.since)}` : null}
         value={w.value != null ? bodyWeight(w.value, units) : null}
         line={w.value == null ? 'No weigh-ins in this period yet.'
           : [w.change != null ? `${weightChange(w.change, units)} this period` : 'One week of weigh-ins so far', w.to_goal != null ? `${Math.abs(bodyValue(w.to_goal, units))} ${u} ${w.to_goal > 0 ? 'to go' : 'past'} goal` : null].filter(Boolean).join(' · ')} />
-      <KpiCard title="Workouts done" k={k.workouts} flat={2} prevLabel={`${k.workouts.previous}%`}
+      <KpiCard title="Workouts done" onOpen={go('training')} k={k.workouts} flat={2} prevLabel={`${k.workouts.previous}%`}
         value={k.workouts.value != null ? `${k.workouts.value}%` : null}
         line={k.workouts.planned ? `${k.workouts.done} of ${k.workouts.planned} planned · ${k.workouts.streak ? `${k.workouts.streak}-week streak` : 'no streak yet'}` : 'No planned workouts in this period.'}
-        note={d.strength.some((l) => l.plateau) ? `${d.strength.filter((l) => l.plateau).map((l) => l.name).join(', ')} steady for ${Math.max(...d.strength.filter((l) => l.plateau).map((l) => l.plateau!.weeks))}+ weeks` : null} />
-      <KpiCard title="Calories (daily average)" k={k.calories} flat={25} prevLabel={`${int(k.calories.previous ?? 0)} kcal`}
+        note={[
+          cardioS ? `${minutesText(cardioS)} cardio` : null,
+          records ? `${records} personal record${records === 1 ? '' : 's'}` : null,
+          steady.length ? `${steady.map((l) => l.name).join(', ')} steady for ${Math.max(...steady.map((l) => l.plateau!.weeks))}+ weeks` : null,
+        ].filter(Boolean).join(' · ') || null} />
+      <KpiCard title="Calories (daily average)" onOpen={go('nutrition')} k={k.calories} flat={25} prevLabel={`${int(k.calories.previous ?? 0)} kcal`}
         value={k.calories.value != null ? `${int(k.calories.value)} kcal` : null}
         line={k.calories.value == null ? 'No meals logged in this period.'
           : `${of(k.calories.value, k.calories.target)}${k.calories.target ? `${int(k.calories.target)} target` : 'no target yet'}${k.meals_on_plan.value != null ? ` · ${k.meals_on_plan.value}% meals on plan` : ''}`} />
-      <KpiCard title="Protein (daily average)" k={k.protein} flat={3} prevLabel={`${k.protein.previous} g`}
+      <KpiCard title="Protein (daily average)" onOpen={go('nutrition')} k={k.protein} flat={3} prevLabel={`${k.protein.previous} g`}
         value={k.protein.value != null ? `${k.protein.value} g` : null}
         line={k.protein.value == null ? 'No meals logged in this period.' : k.protein.target ? `${of(k.protein.value, k.protein.target)}${k.protein.target} g target` : 'No target yet'} />
-      <KpiCard title="Steps (daily average)" k={k.steps} flat={150} prevLabel={int(k.steps.previous ?? 0)}
+      <KpiCard title="Steps (daily average)" onOpen={go('habits')} k={k.steps} flat={150} prevLabel={int(k.steps.previous ?? 0)}
         value={k.steps.value != null ? int(k.steps.value) : null}
         line={k.steps.value == null ? 'No steps logged in this period.' : k.steps.target ? `${of(k.steps.value, k.steps.target)}${int(k.steps.target)} target` : 'No target yet'} />
-      <KpiCard title="Sleep and water" k={k.sleep} flat={0.15} prevLabel={`${k.sleep.previous} h`}
+      <KpiCard title="Sleep and water" onOpen={go('habits')} k={k.sleep} flat={0.15} prevLabel={`${k.sleep.previous} h`}
         value={k.sleep.value != null ? `${k.sleep.value} h` : k.water.value != null ? litres(k.water.value) : null}
         line={k.sleep.value == null && k.water.value == null ? 'No sleep or water logged yet.'
           : [k.sleep.value != null && k.sleep.target ? `${of(k.sleep.value, k.sleep.target)}${k.sleep.target} h` : null,
@@ -217,10 +283,16 @@ function Kpis({ d, units }: { d: ProgressDetail; units: UnitSystem }) {
 
 // ---------- Cards ----------
 
-export function ChartCard({ title, sub, empty, className, children }: { title: string; sub?: string; empty?: string | null; className?: string; children?: React.ReactNode }) {
+export function ChartCard({ title, sub, empty, className, controls, children }: {
+  title: string; sub?: string; empty?: string | null; className?: string
+  /** filters under the heading (shown even when the chart is empty) */
+  controls?: React.ReactNode
+  children?: React.ReactNode
+}) {
   return (
     <section className={`card chart-card${className ? ` ${className}` : ''}`}>
       <div className="card-head"><h3>{title}</h3>{sub && <span className="small muted">{sub}</span>}</div>
+      {controls}
       {empty ? <p className="small muted chart-empty">{empty}</p> : children}
     </section>
   )
@@ -316,29 +388,65 @@ export function MusclesCard({ d }: { d: ProgressDetail }) {
   )
 }
 
-const LIFT_COLORS = ['var(--chart)', 'var(--gold)', 'var(--orange)']
+const LIFT_COLORS = ['var(--chart)', 'var(--gold)', 'var(--orange)', 'var(--leaf)']
+
+const MEASURES: { value: LiftMeasure; label: string }[] = [
+  { value: 'e1rm', label: 'Est. 1RM' },
+  { value: 'top', label: 'Top set' },
+  { value: 'volume', label: 'Volume' },
+]
+const MEASURE_SUB: Record<LiftMeasure, string> = {
+  e1rm: "Estimated 1-rep max, smoothed; faint dots are each session's best set",
+  top: 'Heaviest working set each session',
+  volume: 'Sets × reps × weight for the lift, each session',
+}
 
 export function StrengthCard({ d, units }: { d: ProgressDetail; units: UnitSystem }) {
   const voice = useVoice()
-  const lifts = d.strength
+  const f = useLiftFilter(d)
+  const m = f.measure
+  const lifts = f.ids.flatMap((id) => d.lifts.filter((l) => l.exercise_id === id))
+  const colorOf = (id: string) => LIFT_COLORS[f.ids.indexOf(id)] ?? 'var(--ink-3)'
   const u = unitLabel(units)
+  const lv = (kg: number) => loadValue(kg, units)
+  // Values in the viewer's unit: loads to the plate step, volume to whole units.
+  const show = (kg: number) => (m === 'volume' ? Math.round(toUnit(kg, units)) : lv(kg))
+  const withForecast = m === 'e1rm' && f.forecast
   const ahead = d.period === 'p4' ? 4 : 8
+  const lastDate = (id: string) => liftValues(lifts.find((l) => l.exercise_id === id)!, 'e1rm').at(-1)?.date
   // Session dates, then the forecast dates; spaced by real time.
-  const future = [...new Set(lifts.flatMap((l) => (l.forecast.enough ? l.forecast.points.filter((p) => (new Date(`${p.week}T00:00:00`).getTime() - new Date(`${l.points[l.points.length - 1].date}T00:00:00`).getTime()) / (7 * 86_400_000) <= ahead).map((p) => p.week) : [])))]
-  const dates = [...new Set([...lifts.flatMap((l) => l.points.map((p) => p.date)), ...future])].sort()
+  const future = withForecast
+    ? [...new Set(lifts.flatMap((l) => {
+      const last = lastDate(l.exercise_id)
+      return l.forecast.enough && last ? l.forecast.points.filter((p) => (new Date(`${p.week}T00:00:00`).getTime() - new Date(`${last}T00:00:00`).getTime()) / (7 * 86_400_000) <= ahead).map((p) => p.week) : []
+    }))]
+    : []
+  const dates = [...new Set([...lifts.flatMap((l) => liftValues(l, m).map((p) => p.date)), ...future])].sort()
   const day0 = dates.length ? new Date(`${dates[0]}T00:00:00`).getTime() : 0
   const positions = dates.map((x) => (new Date(`${x}T00:00:00`).getTime() - day0) / 86_400_000)
-  const lv = (kg: number) => loadValue(kg, units)
-  const series: Series[] = lifts.flatMap((l, i) => {
-    const color = LIFT_COLORS[i]
-    const at = new Map(l.points.map((p) => [p.date, p]))
-    const fc = new Map(l.forecast.points.map((p) => [p.week, p]))
-    const last = l.points[l.points.length - 1]
-    const out: Series[] = [
-      { name: `${l.name} (sessions)`, color, faint: true, values: dates.map((dt) => (at.has(dt) ? lv(at.get(dt)!.raw) : null)) },
-      { name: l.name, color, values: dates.map((dt) => (at.has(dt) ? lv(at.get(dt)!.smooth) : null)) },
-    ]
-    if (l.forecast.enough && future.length) {
+  const recordsAt = new Map<string, Map<string, string[]>>()
+  const series: Series[] = lifts.flatMap((l) => {
+    const color = colorOf(l.exercise_id)
+    const vals = new Map(liftValues(l, m).map((p) => [p.date, p.value]))
+    const out: Series[] = []
+    if (m === 'e1rm') {
+      const at = new Map(l.points.map((p) => [p.date, p]))
+      out.push({ name: `${l.name} (sessions)`, color, faint: true, values: dates.map((dt) => (at.has(dt) ? lv(at.get(dt)!.raw) : null)) })
+    }
+    out.push({ name: l.name, color, values: dates.map((dt) => (vals.has(dt) ? show(vals.get(dt)!) : null)) })
+    // A gold ring where a session set a record on this lift (on the faint dot for 1RM, on the line otherwise).
+    const marked = new Map<string, string[]>()
+    for (const r of d.records) {
+      if (r.exercise_id === l.exercise_id && r.kind !== 'milestone' && vals.has(r.date)) marked.set(r.date, [...new Set([...(marked.get(r.date) ?? []), recordTitle(r)])])
+    }
+    if (marked.size) {
+      const ringAt = (dt: string) => (m === 'e1rm' ? lv(l.points.find((p) => p.date === dt)!.raw) : show(vals.get(dt)!))
+      out.push({ name: `${l.name} record`, color, marks: true, values: dates.map((dt) => (marked.has(dt) ? ringAt(dt) : null)) })
+    }
+    recordsAt.set(l.name, marked)
+    const last = l.points.at(-1)
+    if (withForecast && l.forecast.enough && last && future.length) {
+      const fc = new Map(l.forecast.points.map((p) => [p.week, p]))
       const inView = (dt: string) => future.includes(dt) && fc.has(dt)
       out.push({
         name: `${l.name} estimate`, color, dashed: true,
@@ -348,33 +456,165 @@ export function StrengthCard({ d, units }: { d: ProgressDetail; units: UnitSyste
     }
     return out
   })
-  const notes = lifts.map((l) => {
-    const p = l.forecast.points.filter((x) => future.includes(x.week)).pop()
-    const fcText = l.forecast.enough && p
-      ? `about ${lv(p.kg)} ${u} by ${monthDayOf(p.week, d.weeks[d.weeks.length - 1])} (likely ${lv(p.lo)}–${lv(p.hi)}), an estimate`
-      : 'not enough data yet for a forecast (5+ sessions over 3+ weeks)'
-    return `${l.name}: ${fcText}${l.plateau ? `; steady for ${l.plateau.weeks} weeks` : ''}.`
-  })
+  const notes = m !== 'e1rm' ? [] : lifts.map((l) => {
+    const p = withForecast ? l.forecast.points.filter((x) => future.includes(x.week)).pop() : undefined
+    const fcText = !withForecast ? null
+      : l.forecast.enough && p ? `about ${lv(p.kg)} ${u} by ${monthDayOf(p.week, d.weeks[d.weeks.length - 1])} (likely ${lv(p.lo)}–${lv(p.hi)}), an estimate`
+        : 'not enough data yet for a forecast (5+ sessions over 3+ weeks)'
+    const text = [fcText, l.plateau ? `steady for ${l.plateau.weeks} weeks` : null].filter(Boolean).join('; ')
+    return text ? `${l.name}: ${text}.` : null
+  }).filter((x): x is string => !!x)
+  const noLifts = d.lifts.length === 0
+  const controls = noLifts ? null : (
+    <div className="lift-filters">
+      <div className="lift-filter-row">
+        <Segmented label="Show" variant="light" value={m} onChange={(v) => f.set({ measure: v })} options={MEASURES} />
+        {m === 'e1rm' && (
+          <button type="button" className="chip-btn small-chip" aria-pressed={f.forecast} onClick={() => f.set({ forecast: !f.forecast })}>Estimate ahead</button>
+        )}
+      </div>
+      <div className="lift-chips" role="group" aria-label={`Lifts to show, up to ${MAX_CHART_LIFTS}`}>
+        {d.lifts.map((l) => {
+          const on = f.ids.includes(l.exercise_id)
+          const full = !on && f.ids.length >= MAX_CHART_LIFTS
+          return (
+            <button key={l.exercise_id} type="button" className="chip-btn lift-chip" aria-pressed={on} disabled={full}
+              title={full ? `Up to ${MAX_CHART_LIFTS} lifts at once` : on && f.ids.length === 1 ? 'At least one lift' : undefined}
+              onClick={() => f.toggle(l.exercise_id)}>
+              {on && <i className="lift-dot" style={{ background: colorOf(l.exercise_id) }} aria-hidden="true" />}
+              {l.name}<span className="count">{l.sessions}</span>
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+  const what = m === 'e1rm' ? 'Estimated one-rep max' : m === 'top' ? 'Heaviest working set' : 'Volume'
   return (
-    <ChartCard title="Strength" sub="Estimated 1-rep max, smoothed; faint dots are each session's best set" className="span-2"
-      empty={lifts.length && dates.length > 1 ? null : voice === 'coach' ? 'Main lifts show up here after a few logged workouts with weights.' : 'Log a few workouts with weights and your main lifts show up here.'}>
-      <MultiLineChart labels={dates.map((x) => monthDay(x))} positions={positions} series={series} connectGaps label="Estimated one-rep max over time, with estimates ahead"
+    <ChartCard title="Strength" sub={MEASURE_SUB[m]} className="span-2 strength-card" controls={controls}
+      empty={noLifts ? (voice === 'coach' ? 'Lifts show up here after a few logged workouts with weights.' : 'Log a few workouts with weights and your lifts show up here.')
+        : !dates.length ? (m === 'e1rm' ? 'No 1RM estimate for these lifts in this period (sets of up to 10 reps, or 12 with RPE). Try Top set.' : 'Nothing logged for these lifts in this period.')
+          : null}>
+      <MultiLineChart labels={dates.map((x) => monthDay(x))} positions={positions} series={series} connectGaps label={`${what} over time for ${lifts.map((l) => l.name).join(', ')}`}
         format={(v, s, i) => {
           if (s.faint) return null
+          if (s.marks) {
+            const name = s.name.replace(/ record$/, '')
+            const kinds = recordsAt.get(name)?.get(dates[i])
+            return kinds ? `${name}: ${kinds.join(', ')}` : null
+          }
           const l = lifts.find((x) => s.name === x.name || s.name === `${x.name} estimate`)
           if (!l) return null
           if (s.name.endsWith(' estimate')) {
             const p = l.forecast.points.find((x) => x.week === dates[i])
             return p ? `${l.name} estimate: ${v} ${u} (likely ${lv(p.lo)}–${lv(p.hi)})` : null
           }
-          const p = l.points.find((x) => x.date === dates[i])
-          return p ? `${l.name}: ${v} ${u} · best set ${lv(p.kg)} ${u} × ${p.reps}${p.rpe != null ? ` @ RPE ${p.rpe}` : ''} → ${lv(p.raw)}` : null
+          if (m === 'e1rm') {
+            const p = l.points.find((x) => x.date === dates[i])
+            return p ? `${l.name}: ${v} ${u} · best set ${lv(p.kg)} ${u} × ${p.reps}${p.rpe != null ? ` @ RPE ${p.rpe}` : ''} → ${lv(p.raw)}` : null
+          }
+          const x = l.days.find((y) => y.date === dates[i])
+          if (!x) return null
+          return m === 'top' ? `${l.name}: ${v} ${u} × ${x.top_reps}` : `${l.name}: ${int(v)} ${u} · ${x.sets} set${x.sets === 1 ? '' : 's'}`
         }} />
       <Legend items={[
-        ...lifts.map((l, i) => ({ name: l.name, color: LIFT_COLORS[i] })),
+        ...lifts.map((l) => ({ name: l.name, color: colorOf(l.exercise_id) })),
         ...(series.some((s) => s.band) ? [{ name: 'Estimate, shaded: likely range (80%)', color: 'var(--ink-3)', dashed: true }] : []),
+        ...(series.some((s) => s.marks) ? [{ name: 'Ring: a personal record', color: 'var(--gold)' }] : []),
       ]} />
-      <ul className="lift-notes xs muted">{notes.map((n) => <li key={n}>{n}</li>)}</ul>
+      <LiftTable lifts={lifts} measure={m} units={units} colorOf={colorOf} />
+      {notes.length > 0 && <ul className="lift-notes xs muted">{notes.map((n) => <li key={n}>{n}</li>)}</ul>}
+    </ChartCard>
+  )
+}
+
+/** Per chosen lift, in the period: where it started, where it is now, the change and the best. */
+function LiftTable({ lifts, measure, units, colorOf }: { lifts: ProgressDetail['lifts']; measure: LiftMeasure; units: UnitSystem; colorOf: (id: string) => string }) {
+  const u = unitLabel(units)
+  const rows = lifts.map((l) => ({ l, s: liftSummary(l, measure) })).filter((x) => x.s)
+  if (!rows.length) return null
+  const val = (kg: number) => (measure === 'volume' ? `${int(toUnit(kg, units))} ${u}` : `${loadValue(kg, units)} ${u}`)
+  const change = (kg: number, sessions: number) => {
+    if (sessions < 2) return 'first session'
+    const v = measure === 'volume' ? Math.round(toUnit(kg, units)) : loadValue(kg, units)
+    return v === 0 ? 'no change' : delta(v, u, measure === 'volume' ? 0 : 1).replace('.0 ', ' ')
+  }
+  return (
+    <table className="lift-table">
+      <caption className="sr-only">{measure === 'e1rm' ? 'Estimated 1RM' : measure === 'top' ? 'Heaviest set' : 'Volume'} per lift in this period</caption>
+      <thead>
+        <tr><th scope="col">Lift</th><th scope="col">Now</th><th scope="col">Change</th><th scope="col">Best</th></tr>
+      </thead>
+      <tbody>
+        {rows.map(({ l, s }) => (
+          <tr key={l.exercise_id}>
+            <th scope="row"><span className="lift-name"><i className="lift-dot" style={{ background: colorOf(l.exercise_id) }} aria-hidden="true" /><span>{l.name}</span></span></th>
+            <td className="num">{val(s!.now)}</td>
+            <td className={`num${s!.sessions > 1 && s!.change > 0 ? ' up' : ''}`}>{change(s!.change, s!.sessions)}</td>
+            <td className="num">{val(s!.best)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )
+}
+
+
+/**
+ * Records in the period for the lifts shown on the strength chart (the main
+ * lifts unless others are chosen), newest first, then other milestones
+ * (workout counts, bodyweight exercises). With no lifts yet, every exercise's records.
+ */
+export function RecordsCard({ d, units }: { d: ProgressDetail; units: UnitSystem }) {
+  const shown = visibleRecords(d.records, units)
+  const main = useLiftFilter(d).ids
+  const groups = new Map<string, { name: string; records: typeof shown }>()
+  for (const r of shown) {
+    const isMain = !main.length || (r.exercise_id != null && main.includes(r.exercise_id))
+    if (!isMain && r.kind !== 'milestone') continue
+    const key = isMain ? r.exercise_id ?? 'milestones' : 'milestones'
+    const g = groups.get(key) ?? { name: key === 'milestones' ? 'Milestones' : r.exercise, records: [] }
+    g.records.push(r)
+    groups.set(key, g)
+  }
+  const rank = (id: string) => (main.includes(id) ? main.indexOf(id) : id === 'milestones' ? 99 : 50)
+  const list = [...groups.entries()].sort(([a, x], [b, y]) => rank(a) - rank(b) || y.records[0].date.localeCompare(x.records[0].date))
+  return (
+    <ChartCard title="Personal records" sub="The lifts on the strength chart, newest first" empty={list.length ? null : 'No new records on these lifts in this period.'}>
+      <div className="records-by-lift">
+        {list.map(([id, g]) => (
+          <div key={id}>
+            <h4>{g.name}</h4>
+            <RecordList records={g.records} units={units} exercise={id === 'milestones'} dates limit={5} />
+          </div>
+        ))}
+      </div>
+    </ChartCard>
+  )
+}
+/** Cardio minutes per week, and each activity's time and distance in the period. */
+export function CardioCard({ d, units }: { d: ProgressDetail; units: UnitSystem }) {
+  const voice = useVoice()
+  const t = d.training.weekly
+  const total = t.reduce((a, x) => a + x.cardio_s, 0)
+  return (
+    <ChartCard title="Cardio" sub="Minutes per week" empty={total > 0 ? null : voice === 'coach' ? 'No cardio logged in this period.' : 'No cardio in this period. Add a cardio exercise (treadmill, bike, rower…) to a workout and log its time.'}>
+      <BarChart label="Cardio minutes per week" color="var(--gold)"
+        items={t.map((x) => ({
+          label: wk(x.week), value: Math.round(x.cardio_s / 60),
+          tip: x.cardio_s ? `Week of ${wk(x.week)}: ${minutesText(x.cardio_s)}${x.cardio_m ? ` · ${distanceText(x.cardio_m, units)}` : ''}` : `Week of ${wk(x.week)}: none`,
+        }))} />
+      <ul className="cardio-list">
+        {d.cardio.map((c) => (
+          <li key={c.exercise_id}>
+            <span className="small"><b>{c.name}</b> <span className="muted">· {c.sessions} session{c.sessions === 1 ? '' : 's'}</span></span>
+            <span className="small num">
+              {minutesText(c.seconds)}{c.metres ? ` · ${distanceText(c.metres, units)}` : ''}
+              {c.longest_m ? <span className="xs muted"> · longest {distanceText(c.longest_m, units)}</span> : null}
+            </span>
+          </li>
+        ))}
+      </ul>
     </ChartCard>
   )
 }

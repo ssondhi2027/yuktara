@@ -132,6 +132,8 @@ export interface Series {
   dashed?: boolean
   /** dots only, small and faint (e.g. raw per-session estimates under a smoothed line) */
   faint?: boolean
+  /** rings only, no line (e.g. where a personal record was set) */
+  marks?: boolean
   /** a shaded range around the line, per value (e.g. a forecast's 80% band) */
   band?: ({ lo: number; hi: number } | null)[]
 }
@@ -192,7 +194,7 @@ export function MultiLineChart({ labels, series, height = 170, label, format, mi
           ))
         })}
         {series.map((s) => {
-          if (s.faint) return null
+          if (s.faint || s.marks) return null
           // Gaps stay gaps: a new segment starts after a missing value.
           let d = ''
           let pen = false
@@ -205,7 +207,7 @@ export function MultiLineChart({ labels, series, height = 170, label, format, mi
         })}
       </svg>
       {series.flatMap((s) => s.values.map((v, i) => v == null ? null : (
-        <span key={`${s.name}-${i}`} className={s.faint ? 'kit-dot faint' : 'kit-dot'}
+        <span key={`${s.name}-${i}`} className={s.faint ? 'kit-dot faint' : s.marks ? 'kit-dot mark' : 'kit-dot'}
           style={{ left: `${(x(i) / W) * 100}%`, top: y(v), borderColor: s.color, background: s.faint || active === i ? s.color : undefined }} />
       )))}
       <div className="kit-labels" style={{ paddingInline: `${(padX / W) * 100}%` }}>

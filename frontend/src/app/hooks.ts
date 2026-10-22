@@ -74,3 +74,38 @@ export function useIsDark() {
   const [pref] = useTheme()
   return pref === 'system' ? system : pref === 'dark'
 }
+
+// ---------- Celebrating new personal records (Profile → Settings) ----------
+// On this device only; badges show either way, this only turns the moment on
+// the workout summary on or off.
+const CELEBRATE_KEY = 'yuktara.celebrate'
+let celebrate = (() => {
+  try {
+    return localStorage.getItem(CELEBRATE_KEY) !== 'off'
+  } catch {
+    return true
+  }
+})()
+const celebrateListeners = new Set<() => void>()
+
+function setCelebrate(on: boolean) {
+  celebrate = on
+  try {
+    localStorage.setItem(CELEBRATE_KEY, on ? 'on' : 'off')
+  } catch {
+    /* private mode: the choice just won't persist */
+  }
+  celebrateListeners.forEach((l) => l())
+}
+
+export function useCelebrations() {
+  const value = useSyncExternalStore(
+    (cb) => {
+      celebrateListeners.add(cb)
+      return () => celebrateListeners.delete(cb)
+    },
+    () => celebrate,
+    () => celebrate,
+  )
+  return [value, setCelebrate] as const
+}

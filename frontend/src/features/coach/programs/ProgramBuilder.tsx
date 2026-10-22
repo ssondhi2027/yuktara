@@ -13,6 +13,9 @@ import { ExercisePicker } from '@/features/client/train/ExercisePicker'
 import { ExerciseForm } from './ExerciseForm'
 import { emptyExercise } from '@/lib/exercises'
 import { linkedToNext, linkWithNext, normalizeSupersets, supersetTags, unlinkFromNext } from '@/lib/workouts'
+import { CARDIO_ZONES, cardioTargetText, distanceUnit, inputFromMetres, metresFromInput, ZONE_HINT, ZONE_LABEL, type CardioZone } from '@/lib/cardio'
+import { useUnits } from '@/app/auth'
+import type { UnitSystem } from '@/types/db'
 
 const DAY_ORDER = [1, 2, 3, 4, 5, 6, 0]
 const STATUS_LABEL = { template: 'Template', draft: 'Draft', upcoming: 'Assigned', active: 'Running', ended: 'Ended' } as const
@@ -154,11 +157,20 @@ export function ProgramBuilder({ initial }: { initial: Program }) {
   const assignable = isClient && (p.status === 'draft' || p.status === 'upcoming')
 
   const addExercise = (wi: number, e: LibraryExercise, replace = picker?.replace) => {
-    const dose = GOALS[p.goal ?? 'health'][kindOf(e)]
+    const cardio = e.kind === 'cardio'
+    const dose = cardio ? { reps: '20 min', rest: null } : GOALS[p.goal ?? 'health'][kindOf(e)]
+    // Cardio: one round of 20 minutes, easy; the coach changes it from there.
+    const targets = cardio
+      ? { sets: 1, reps: dose.reps, rpe: null, rest_seconds: null, minutes: 20, distance_m: null, zone: 'easy' as CardioZone, superset: null }
+      : { sets: 3, reps: dose.reps, rpe: 8, rest_seconds: dose.rest, minutes: null, distance_m: null, zone: null }
     change((d) => {
-      const x: ProgramExercise = { id: null, exercise_id: e.id, name: e.name, sets: 3, reps: dose.reps, rpe: 8, rest_seconds: dose.rest, notes: '' }
-      if (replace != null) Object.assign(d.workouts[wi].exercises[replace], { exercise_id: e.id, name: e.name })
-      else d.workouts[wi].exercises.push(x)
+      const x: ProgramExercise = { id: null, exercise_id: e.id, name: e.name, notes: '', ...targets }
+      if (replace != null) {
+        const old = d.workouts[wi].exercises[replace]
+        const wasCardio = byId.get(old.exercise_id)?.kind === 'cardio'
+        // Swapping between strength and cardio starts the targets over; otherwise they stay.
+        Object.assign(old, { exercise_id: e.id, name: e.name }, wasCardio !== cardio ? targets : {})
+      } else d.workouts[wi].exercises.push(x)
     })
     setPicker(null)
   }
@@ -340,8 +352,10 @@ function WorkoutCard({ w, index, count, library, onChange, onMove, onRemove, onA
   onReplace: (exerciseIndex: number) => void
 }) {
   const id = `w${index}`
+  const units = useUnits()
   const num = (v: string) => (v.trim() === '' ? null : Number(v))
   const tags = supersetTags(w.exercises)
+  const isCardio = (i: number) => library.get(w.exercises[i]?.exercise_id)?.kind === 'cardio'
   return (
     <section className="card workout-card">
       <div className="workout-top">
@@ -375,7 +389,7 @@ function WorkoutCard({ w, index, count, library, onChange, onMove, onRemove, onA
               <div className="ex-row-top">
                 {tag && <span className="ss-chip" aria-label={`Superset ${tag}`}>{tag}</span>}
                 <b className="grow truncate">{x.name}</b>
-                {e && <span className="xs muted truncate">{e.primary.map((m) => MUSCLE_LABEL[m]).join(', ')}</span>}
+                {e && <span className="xs muted truncate">{e.kind === 'cardio' ? 'Cardio' : e.primary.map((m) => MUSCLE_LABEL[m]).join(', ')}</span>}
                 <button type="button" className="icon-btn sm" aria-label={`Swap ${x.name}`} onClick={() => onReplace(xi)}><ArrowLeftRight size={15} /></button>
                 <button type="button" className="icon-btn sm" aria-label={`Move ${x.name} up`} disabled={xi === 0}
                   onClick={() => onChange((wk) => { const [m] = wk.exercises.splice(xi, 1); wk.exercises.splice(xi - 1, 0, m) })}><ArrowUp size={15} /></button>
@@ -383,6 +397,9 @@ function WorkoutCard({ w, index, count, library, onChange, onMove, onRemove, onA
                   onClick={() => onChange((wk) => { const [m] = wk.exercises.splice(xi, 1); wk.exercises.splice(xi + 1, 0, m) })}><ArrowDown size={15} /></button>
                 <button type="button" className="icon-btn sm" aria-label={`Remove ${x.name}`} onClick={() => onChange((wk) => { wk.exercises.splice(xi, 1) })}><Trash2 size={15} /></button>
               </div>
+              {isCardio(xi) ? (
+                <CardioFields x={x} xid={xid} units={units} onChange={(f) => onChange((wk) => f(wk.exercises[xi]))} />
+              ) : (
               <div className="ex-row-fields">
                 <label htmlFor={`${xid}-sets`}>Sets<input id={`${xid}-sets`} className="input" type="number" min={1} max={10} value={x.sets}
                   onChange={(ev) => onChange((wk) => { wk.exercises[xi].sets = Number(ev.target.value) })} /></label>
@@ -397,9 +414,11 @@ function WorkoutCard({ w, index, count, library, onChange, onMove, onRemove, onA
                     onChange={(ev) => onChange((wk) => { wk.exercises[xi].rest_seconds = num(ev.target.value) })} /></label>
                 )}
               </div>
+              )}
               <input className="input ex-note" placeholder="Note for the client" aria-label={`${x.name} note`} maxLength={500} value={x.notes}
                 onChange={(ev) => onChange((wk) => { wk.exercises[xi].notes = ev.target.value })} />
-              {xi < w.exercises.length - 1 && (
+              {/* Cardio isn't paired into supersets. */}
+              {xi < w.exercises.length - 1 && !isCardio(xi) && !isCardio(xi + 1) && (
                 <button type="button" className="btn btn-ghost btn-sm ss-link" aria-pressed={linked}
                   aria-label={linked ? `Unlink ${x.name} from ${w.exercises[xi + 1].name}` : `Superset ${x.name} with ${w.exercises[xi + 1].name}`}
                   onClick={() => onChange((wk) => { wk.exercises = linked ? unlinkFromNext(wk.exercises, xi) : linkWithNext(wk.exercises, xi) })}>
@@ -413,5 +432,38 @@ function WorkoutCard({ w, index, count, library, onChange, onMove, onRemove, onA
       {w.exercises.length === 0 && <p className="small muted">No exercises yet.</p>}
       <button type="button" className="btn btn-ghost btn-sm" style={{ alignSelf: 'flex-start' }} onClick={onAdd}><Plus size={16} /> Add exercise</button>
     </section>
+  )
+}
+
+/**
+ * A cardio slot: rounds of minutes and/or a distance (in the coach's units) at
+ * an effort, with the rest between rounds when there's more than one.
+ */
+function CardioFields({ x, xid, units, onChange }: { x: ProgramExercise; xid: string; units: UnitSystem; onChange: (f: (x: ProgramExercise) => void) => void }) {
+  const [dist, setDist] = useState(() => (x.distance_m != null ? inputFromMetres(x.distance_m, units) : ''))
+  const num = (v: string) => (v.trim() === '' ? null : Number(v))
+  return (
+    <>
+      <div className="ex-row-fields cardio-fields">
+        <label htmlFor={`${xid}-rounds`}>Rounds<input id={`${xid}-rounds`} className="input" type="number" min={1} max={10} value={x.sets}
+          onChange={(ev) => onChange((y) => { y.sets = Number(ev.target.value) })} /></label>
+        <label htmlFor={`${xid}-min`}>{x.sets > 1 ? 'Minutes each' : 'Minutes'}<input id={`${xid}-min`} className="input" type="number" min={0.5} max={600} step={0.5} value={x.minutes ?? ''}
+          onChange={(ev) => onChange((y) => { y.minutes = num(ev.target.value) })} /></label>
+        <label htmlFor={`${xid}-dist`}>{`Distance (${distanceUnit(units)})`}<input id={`${xid}-dist`} className="input" type="number" min={0} step={0.1} value={dist} placeholder="optional"
+          onChange={(ev) => { setDist(ev.target.value); onChange((y) => { y.distance_m = metresFromInput(ev.target.value, units) }) }} /></label>
+        <label htmlFor={`${xid}-zone`}>Effort<select id={`${xid}-zone`} className="input" value={x.zone ?? ''}
+          onChange={(ev) => onChange((y) => { y.zone = (ev.target.value || null) as CardioZone | null })}>
+          <option value="">Any</option>
+          {CARDIO_ZONES.map((z) => <option key={z} value={z}>{ZONE_LABEL[z]}</option>)}
+        </select></label>
+        {x.sets > 1 && (
+          <label htmlFor={`${xid}-rest`}>Easy between (s)<input id={`${xid}-rest`} className="input" type="number" min={0} max={900} step={15} value={x.rest_seconds ?? ''}
+            onChange={(ev) => onChange((y) => { y.rest_seconds = num(ev.target.value) })} /></label>
+        )}
+      </div>
+      <p className="xs muted cardio-plan">
+        Client sees: {cardioTargetText(x, units)}{x.zone ? ` (${ZONE_HINT[x.zone]})` : ''}
+      </p>
+    </>
   )
 }

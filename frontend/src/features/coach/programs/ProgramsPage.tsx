@@ -182,7 +182,7 @@ function ExercisesView() {
             <button type="button" className="program-row link-row" style={{ width: '100%', textAlign: 'left' }} onClick={() => setOpen(e)}>
               <div className="grow" style={{ minWidth: 0 }}>
                 <b className="truncate" style={{ display: 'block' }}>{e.name}</b>
-                <div className="xs muted">{[e.primary.map((m) => MUSCLE_LABEL[m]).join(', '), e.equipment, LEVEL_LABEL[e.level]].filter(Boolean).join(' · ')}</div>
+                <div className="xs muted">{[e.kind === 'cardio' ? 'Cardio' : e.primary.map((m) => MUSCLE_LABEL[m]).join(', '), e.equipment, LEVEL_LABEL[e.level]].filter(Boolean).join(' · ')}</div>
               </div>
             </button>
           </li>

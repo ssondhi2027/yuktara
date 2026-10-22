@@ -10,6 +10,7 @@ import { heightProblem, nameProblem, phoneProblem, textProblem, weightProblem } 
 import { CM_PER_IN, inputFromKg, kgFromInput, litres, unitLabel } from '@/lib/units'
 import type { DietType, TrainLocation, UnitSystem } from '@/types/db'
 import { useAuth } from '@/app/auth'
+import { useCelebrations } from '@/app/hooks'
 import { PageError, PageLoading } from '@/components/ui/Loading'
 import './profile.css'
 import { AvatarUpload } from '@/components/ui/AvatarUpload'
@@ -172,6 +173,7 @@ function Profile({ p }: { p: MyProfile }) {
                 ))}
               </div>
             </div>
+            <CelebrateSetting />
             <button type="button" className="btn btn-ghost" onClick={async () => {
               if (user?.guest) return setConfirmGuest(true)
               await signOut()
@@ -183,6 +185,23 @@ function Profile({ p }: { p: MyProfile }) {
           </section>
         </aside>
       </div>
+    </div>
+  )
+}
+
+/** Turns the moment on the workout summary after a new record on or off (this device); badges show either way. */
+function CelebrateSetting() {
+  const [on, set] = useCelebrations()
+  return (
+    <div className="stack" style={{ gap: 4 }}>
+      <div className="between">
+        <span>Celebrate new records</span>
+        <div className="seg" role="group" aria-label="Celebrate new records">
+          <button type="button" aria-pressed={on} onClick={() => set(true)}>On</button>
+          <button type="button" aria-pressed={!on} onClick={() => set(false)}>Off</button>
+        </div>
+      </div>
+      <span className="xs muted">Record badges still show when it's off. Saved on this device.</span>
     </div>
   )
 }

@@ -7,9 +7,12 @@ import { LEVEL_LABEL } from '@/lib/labels'
 import { MUSCLE_LABEL } from '@/lib/muscles'
 import { MUSCLE_GROUPS, type ExerciseLevel, type MuscleGroup } from '@/types/db'
 import { Sheet } from '@/components/ui/Sheet'
+import { Segmented } from '@/components/ui/Segmented'
+import { CARDIO_EQUIPMENT } from '@/lib/cardio'
 
 export const draftOf = (e: LibraryExercise): ExerciseDraft => ({
   id: e.id, name: e.name, level: e.level, equipment: e.equipment, cue: e.cue ?? '', primary: [...e.primary], secondary: [...e.secondary],
+  kind: e.kind ?? 'strength',
 })
 
 /**
@@ -33,7 +36,8 @@ export function ExerciseForm({ initial, onSaved, onDeleted, onClose }: {
     mutationFn: () => api.saveExercise(d),
     onSuccess: async ({ id }) => {
       await qc.invalidateQueries({ queryKey: ['exercise-library'] })
-      onSaved?.({ id, name: d.name.trim(), level: d.level, equipment: d.equipment.trim(), cue: d.cue.trim() || null, primary: d.primary, secondary: d.secondary, custom: true })
+      const cardio = d.kind === 'cardio'
+      onSaved?.({ id, name: d.name.trim(), level: d.level, equipment: d.equipment.trim(), cue: d.cue.trim() || null, primary: cardio ? [] : d.primary, secondary: cardio ? [] : d.secondary, custom: true, kind: d.kind })
       onClose()
     },
     onError: (e) => setErrors({ save: e instanceof Error ? e.message : 'Could not save. Try again.' }),
@@ -80,6 +84,12 @@ export function ExerciseForm({ initial, onSaved, onDeleted, onClose }: {
       <form className="stack exercise-form" style={{ gap: 12 }} noValidate onSubmit={submit}>
         <p className="small muted">Your own exercises show up in your programs, and in your clients' workout logger and body map.</p>
         <div className="field">
+          <span className="label-like">Type</span>
+          <Segmented label="Exercise type" variant="light" value={d.kind} onChange={(k) => set('kind', k)}
+            options={[{ value: 'strength', label: 'Strength' }, { value: 'cardio', label: 'Cardio' }]} />
+          <span className="xs muted">{d.kind === 'cardio' ? 'Logged by time, with distance, level and heart rate if they like. Not counted on the body map.' : 'Logged as weight × reps; counts for its main muscles on the body map.'}</span>
+        </div>
+        <div className="field">
           <label htmlFor="ex-name">Name</label>
           <input id="ex-name" className="input" maxLength={80} value={d.name} onChange={(e) => set('name', e.target.value)} />
           {errors.name && <span role="alert" className="xs bad">{errors.name}</span>}
@@ -93,13 +103,13 @@ export function ExerciseForm({ initial, onSaved, onDeleted, onClose }: {
           </div>
           <div className="field">
             <label htmlFor="ex-equipment">Equipment</label>
-            <input id="ex-equipment" className="input" list="ex-equipment-list" maxLength={40} placeholder="e.g. dumbbells" value={d.equipment} onChange={(e) => set('equipment', e.target.value)} />
-            <datalist id="ex-equipment-list">{EQUIPMENT.map((x) => <option key={x} value={x} />)}</datalist>
+            <input id="ex-equipment" className="input" list="ex-equipment-list" maxLength={40} placeholder={d.kind === 'cardio' ? 'e.g. treadmill' : 'e.g. dumbbells'} value={d.equipment} onChange={(e) => set('equipment', e.target.value)} />
+            <datalist id="ex-equipment-list">{(d.kind === 'cardio' ? CARDIO_EQUIPMENT : EQUIPMENT).map((x) => <option key={x} value={x} />)}</datalist>
             {errors.equipment && <span role="alert" className="xs bad">{errors.equipment}</span>}
           </div>
         </div>
-        {muscles('primary', 'Main muscles')}
-        {muscles('secondary', 'Also works (optional)')}
+        {d.kind !== 'cardio' && muscles('primary', 'Main muscles')}
+        {d.kind !== 'cardio' && muscles('secondary', 'Also works (optional)')}
         <div className="field">
           <label htmlFor="ex-cue">Coaching cue (optional)</label>
           <textarea id="ex-cue" className="textarea" rows={2} maxLength={300} placeholder="One line clients see while logging" value={d.cue} onChange={(e) => set('cue', e.target.value)} />

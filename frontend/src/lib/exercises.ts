@@ -13,12 +13,14 @@ export interface ExerciseDraft {
   cue: string
   primary: MuscleGroup[]
   secondary: MuscleGroup[]
+  /** cardio exercises are logged by time and distance and have no muscles (0026) */
+  kind: 'strength' | 'cardio'
 }
 
 /** Equipment in the shared library, offered as choices (free text is allowed too). */
 export const EQUIPMENT = ['barbell', 'dumbbells', 'cable', 'machine', 'bodyweight', 'bench', 'pull-up bar', 'kettlebell', 'band', 'jump rope', 'ab wheel'] as const
 
-export const emptyExercise = (): ExerciseDraft => ({ id: null, name: '', level: 'beginner', equipment: '', cue: '', primary: [], secondary: [] })
+export const emptyExercise = (): ExerciseDraft => ({ id: null, name: '', level: 'beginner', equipment: '', cue: '', primary: [], secondary: [], kind: 'strength' })
 
 /**
  * Field problems, or an empty object. `libraryNames` are the shared library's
@@ -35,7 +37,10 @@ export function exerciseProblems(d: ExerciseDraft, libraryNames: Set<string>, ow
   else if (ownNames.has(key)) out.name = 'You already have an exercise with this name.'
   if (d.equipment.trim().length > 40) out.equipment = 'Use up to 40 characters.'
   if (d.cue.trim().length > 300) out.cue = 'Use up to 300 characters.'
-  if (!d.primary.length) out.primary = 'Choose at least one main muscle.'
-  if (d.secondary.some((m) => d.primary.includes(m))) out.secondary = 'A muscle is either main or secondary, not both.'
+  // Cardio has no muscles (the body map counts strength sets only).
+  if (d.kind !== 'cardio') {
+    if (!d.primary.length) out.primary = 'Choose at least one main muscle.'
+    if (d.secondary.some((m) => d.primary.includes(m))) out.secondary = 'A muscle is either main or secondary, not both.'
+  }
   return out
 }

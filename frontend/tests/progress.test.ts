@@ -3,8 +3,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  doneIn, mondayOf, pctOf, periodWeeks, planStreak, plannedIn, progressFrom, rawFrom, trend, volumeKg,
-  type ProgressRaw,
+  doneIn, liftSummary, liftValues, MAX_CHART_LIFTS, mondayOf, pctOf, periodWeeks, pickLifts, planStreak, plannedIn, progressFrom, rawFrom,
+  toggleLift, trend, volumeKg, type ProgressRaw,
 } from '../src/lib/progress.ts'
 import { loadValue, toUnit } from '../src/lib/units.ts'
 
@@ -130,4 +130,53 @@ test('averages come out without float noise', () => {
   assert.equal(p.kpis.sleep.value, 7.1) // not 7.1000000000000005
   assert.equal(p.kpis.weight.to_goal, 3.7) // not 3.6999999999999957
   assert.equal(String(p.kpis.weight.value), '71.8')
+})
+
+// ---------- The strength chart's filters ----------
+
+const lift = (exercise_id: string, name: string, kg: number | null, reps: number, extra: { drop?: boolean; rpe?: number } = {}) =>
+  ({ exercise_id, name, kg, reps, rpe: extra.rpe ?? null, primary: [] as never[], drop: extra.drop })
+
+test('every lift in the period: heaviest set and volume per session, drops in volume only', () => {
+  const p = progressFrom(raw({
+    sessions: [
+      { date: '2026-09-15', template_id: null, sets: [lift('sq', 'Back squat', 100, 5)] }, // before the period
+      { date: '2026-09-22', template_id: null, sets: [lift('sq', 'Back squat', 80, 5), lift('sq', 'Back squat', 85, 3), lift('sq', 'Back squat', 85, 4), lift('sq', 'Back squat', 95, 8, { drop: true })] },
+      { date: '2026-09-29', template_id: null, sets: [lift('sq', 'Back squat', 87.5, 3), lift('row', 'Cable row', 40, 12), lift('pu', 'Pull-up', null, 8)] },
+      { date: '2026-10-06', template_id: null, sets: [lift('row', 'Cable row', 42.5, 12), lift('curl', 'Curl', 12, 15)] },
+      { date: '2026-10-13', template_id: null, sets: [lift('row', 'Cable row', 45, 10)] },
+    ],
+  }), 'p4')
+  // Most sessions first; bodyweight-only exercises aren't lifts here.
+  assert.deepEqual(p.lifts.map((l) => `${l.name} ${l.sessions}`), ['Cable row 3', 'Back squat 2', 'Curl 1'])
+  const sq = p.lifts.find((l) => l.exercise_id === 'sq')!
+  assert.deepEqual(sq.days[0], { date: '2026-09-22', top_kg: 85, top_reps: 4, volume_kg: 80 * 5 + 85 * 3 + 85 * 4 + 95 * 8, sets: 3 })
+  // Curl 12 × 15 can't give a 1RM estimate but is still a lift (heaviest set, volume).
+  const curl = p.lifts.find((l) => l.exercise_id === 'curl')!
+  assert.equal(curl.points.length, 0)
+  assert.deepEqual(liftValues(curl, 'top'), [{ date: '2026-10-06', value: 12 }])
+  assert.equal(liftValues(curl, 'e1rm').length, 0)
+  assert.equal(liftSummary(curl, 'e1rm'), null)
+  // The same lifts as `strength` for 1RM.
+  assert.deepEqual(p.lifts.find((l) => l.exercise_id === 'row')!.points, p.strength.find((l) => l.exercise_id === 'row')!.points)
+  // Summaries per measure.
+  const row = p.lifts.find((l) => l.exercise_id === 'row')!
+  assert.deepEqual(liftSummary(row, 'top'), { start: 40, now: 45, change: 5, best: 45, sessions: 3 })
+  assert.deepEqual(liftSummary(row, 'volume'), { start: 480, now: 450, change: -30, best: 510, sessions: 3 })
+  const e = liftSummary(row, 'e1rm')!
+  assert.equal(e.best, Math.max(...row.points.map((x) => x.raw)))
+  assert.equal(e.now, row.points.at(-1)!.smooth)
+})
+
+test('choosing lifts for the chart', () => {
+  const ls = ['a', 'b', 'c', 'd', 'e'].map((id, i) => ({ exercise_id: id, name: id, sessions: 9 - i, days: [], points: [], forecast: { enough: false, slope_kg_week: null, points: [] }, plateau: null }))
+  assert.deepEqual(pickLifts(ls, null, ['c', 'a']), ['a', 'c']) // the main lifts, in the period's order
+  assert.deepEqual(pickLifts(ls, ['e', 'x'], ['a']), ['e']) // chosen ones still in the period
+  assert.deepEqual(pickLifts(ls, ['x'], ['y']), ['a', 'b', 'c']) // nothing left: the most-logged
+  assert.deepEqual(pickLifts([], ['a'], ['a']), [])
+  assert.deepEqual(pickLifts(ls, ['a', 'b', 'c', 'd', 'e'], []).length, MAX_CHART_LIFTS)
+  assert.deepEqual(toggleLift(['a'], 'b'), ['a', 'b'])
+  assert.deepEqual(toggleLift(['a', 'b'], 'a'), ['b'])
+  assert.deepEqual(toggleLift(['a'], 'a'), ['a']) // never none
+  assert.deepEqual(toggleLift(['a', 'b', 'c', 'd'], 'e'), ['a', 'b', 'c', 'd']) // never more than four
 })

@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Link } from 'react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Camera, Check, ClipboardCheck, Droplet, Footprints, MessageSquare, Moon, Plus, Scale, Send, Sparkles, X } from 'lucide-react'
+import { Award, Camera, Check, ChevronRight, ClipboardCheck, Droplet, Footprints, MessageSquare, Moon, Plus, Scale, Send, Sparkles, X } from 'lucide-react'
 import { api, type ClientHome } from '@/lib/api'
 import { useLayout } from '@/app/hooks'
 import { useUnits } from '@/app/auth'
@@ -17,6 +17,8 @@ import { HabitSheet } from './HabitSheet'
 import './home.css'
 import { Avatar } from '@/components/ui/Avatar'
 import { GuestCard, useIsGuest } from '@/components/guest/Guest'
+import { RecordList } from '@/components/records/Records'
+import { bySet, recordCount, recordSet, recordTitle, visibleRecords } from '@/lib/records'
 
 export function ClientHomePage() {
   const { data, error, isPending } = useQuery({ queryKey: ['client-home'], queryFn: api.clientHome })
@@ -67,6 +69,7 @@ export function ClientHomePage() {
         {!phone && <CoachNoteCard h={h} desktop={desktop} />}
         {desktop && <HabitsCard h={h} onLog={logHabits} />}
         {desktop && <BestsCard h={h} />}
+        {!desktop && <RecordsNote h={h} />}
       </div>
 
       {phone && <HabitTiles h={h} onLog={logHabits} />}
@@ -243,7 +246,7 @@ function WorkoutCard({ h, compact, desktop }: { h: ClientHome; compact: boolean;
         <div className="muted small">{w.exercises.length} exercises{minutes}</div>
         <ul className="mini-list">
           {w.exercises.slice(0, 2).map((e) => (
-            <li key={e.name}>{e.name} <span className="muted">{e.sets} × {e.reps}</span></li>
+            <li key={e.name}>{e.name} <span className="muted">{e.plan ?? `${e.sets} × ${e.reps}`}</span></li>
           ))}
           {w.exercises.length > 2 && <li className="muted">+ {w.exercises.length - 2} more</li>}
         </ul>
@@ -262,7 +265,7 @@ function WorkoutCard({ h, compact, desktop }: { h: ClientHome; compact: boolean;
           <li key={e.name} className="between">
             <span>{e.name}</span>
             <span className="muted small">
-              {e.sets} × {e.reps}{e.weight_kg ? ` · ${loadWeight(e.weight_kg, units)}` : ''}{e.note ? ` ${e.note}` : ''}
+              {e.plan ?? <>{e.sets} × {e.reps}{e.weight_kg ? ` · ${loadWeight(e.weight_kg, units)}` : ''}{e.note ? ` ${e.note}` : ''}</>}
             </span>
           </li>
         ))}
@@ -489,19 +492,48 @@ function HabitsCard({ h, onLog }: { h: ClientHome; onLog: () => void }) {
   )
 }
 
+/** Phone and tablet (no best-lifts card): this week's records in one line, to Progress. */
+function RecordsNote({ h }: { h: ClientHome }) {
+  const units = useUnits()
+  const recent = visibleRecords(h.recent_records, units)
+  if (!recent.length) return null
+  const top = bySet(recent)[0]
+  return (
+    <Link to="/progress" className="card records-note">
+      <span className="records-icon" aria-hidden="true"><Award size={18} /></span>
+      <span className="grow" style={{ minWidth: 0 }}>
+        <b>{recordCount(recent.length)} this week</b>
+        <span className="small muted records-note-line">
+          {[top.first.exercise, recordSet(top.first, units), top.records.map(recordTitle).join(', ')].filter(Boolean).join(' · ')}
+        </span>
+      </span>
+      <ChevronRight size={18} className="muted" aria-hidden="true" />
+    </Link>
+  )
+}
+
 function BestsCard({ h }: { h: ClientHome }) {
   const units = useUnits()
+  // Records from the last 7 days, and the lifts they were on.
+  const recent = visibleRecords(h.recent_records, units)
+  const fresh = new Set(recent.map((r) => r.exercise))
   return (
     <section className="card">
       <h3 style={{ marginBottom: 6 }}>Personal bests</h3>
+      {recent.length > 0 && (
+        <div className="best-recent">
+          <div className="eyebrow" style={{ marginBottom: 8 }}>New this week</div>
+          <RecordList records={recent} units={units} dates limit={3} />
+        </div>
+      )}
       {h.bests.length === 0 ? (
-        <p className="small muted">Your best lifts show up here once you log workouts.</p>
+        recent.length === 0 && <p className="small muted">Your best lifts show up here once you log workouts.</p>
       ) : (
         <>
           <ul className="list-rows">
             {h.bests.map((b) => (
               <li key={b.exercise} className="between small">
-                <span>{b.exercise} · {b.reps} reps</span>
+                <span>{b.exercise} · {b.reps} reps{fresh.has(b.exercise) && <span className="pill gold best-new">New</span>}</span>
                 <span><b>{loadWeight(b.kg, units)}</b> <span className="good">{delta(toUnit(b.change, units), '')}</span></span>
               </li>
             ))}

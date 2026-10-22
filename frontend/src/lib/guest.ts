@@ -20,7 +20,8 @@ import { compressImage } from './image'
 import { mealsFor, type Food } from './meals'
 import { progressFrom, type Period, type ProgressRaw } from './progress'
 import { avg, person, programWeek, round1, weekMonday } from './live/shared'
-import { inSetOrder, minutesSince, OWN_WORKOUT, summarize, type SummarySet } from './workouts'
+import { BODYWEIGHT, inSetOrder, minutesSince, OWN_WORKOUT, summarize, type SummarySet } from './workouts'
+import { bestsFrom, findRecords, type Bests, type ExerciseInfo, type PersonalRecord, type RecordSession } from './records'
 
 const S = () => guestStore.state
 const uid = () => (typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `g-${Date.now()}-${Math.random().toString(36).slice(2)}`)
@@ -73,10 +74,24 @@ const finished = () => S().sessions.filter((s) => s.finished_at).sort((a, b) => 
 const isHard = (x: SetWrite) => !x.is_warmup && x.drop_of == null
 const avgOf = (xs: (number | null)[]) => avg(xs.filter((x): x is number => x != null))
 
-function summaryOf(s: GuestSession): WorkoutSummary {
+// ---------- Personal records (lib/records.ts), worked out from the guest's own workouts ----------
+const recordInfo = (): ExerciseInfo => new Map(library().map((e) => [e.id, { name: e.name, bodyweight: BODYWEIGHT.has(e.equipment), cardio: e.kind === 'cardio' }]))
+const recordSessions = (): RecordSession[] => S().sessions.filter((s) => s.finished_at).map((s) => ({ id: s.id, date: s.performed_on, started_at: s.started_at, sets: s.sets }))
+function records(): PersonalRecord[] {
+  const p = S().profile
+  const weighIns = Object.entries(S().days).flatMap(([date, l]) => (l.weight_kg != null ? [{ date, kg: l.weight_kg }] : []))
+  if (p.start_weight_kg != null) weighIns.unshift({ date: p.start_date, kg: p.start_weight_kg })
+  return findRecords(recordSessions(), recordInfo(), weighIns)
+}
+
+function summaryOf(s: GuestSession, all?: PersonalRecord[]): WorkoutSummary {
+  return { ...plainSummary(s), records: s.finished_at ? (all ?? records()).filter((r) => r.session_id === s.id) : [] }
+}
+
+function plainSummary(s: GuestSession): WorkoutSummary {
   const lib = byId()
   const sets: SummarySet[] = s.sets.filter((x) => !x.is_warmup).map((x) => ({
-    ...x, name: lib.get(x.exercise_id)?.name ?? 'Exercise', primary: lib.get(x.exercise_id)?.primary ?? [],
+    ...x, name: lib.get(x.exercise_id)?.name ?? 'Exercise', primary: lib.get(x.exercise_id)?.primary ?? [], cardio: lib.get(x.exercise_id)?.kind === 'cardio',
   }))
   return summarize({ id: s.id, name: OWN_WORKOUT, performed_on: s.performed_on, finished: !!s.finished_at, duration_min: s.duration_min, notes: s.notes || null, effort: s.effort }, sets)
 }
@@ -179,6 +194,7 @@ export const guestApi: GuestApi = {
       weight: { points: weightPoints(p.start_date, week), current, change: current != null && start != null ? round1(current - start) : null, goal: p.goal_weight_kg, start_date: p.start_date },
       coach_note: null,
       bests: bests(),
+      recent_records: records().filter((r) => r.date >= addDays(t, -6)).sort((a, b) => b.date.localeCompare(a.date)),
     }
   },
 
@@ -186,12 +202,13 @@ export const guestApi: GuestApi = {
   trainWeek(): TrainWeek {
     const t = today()
     const open = openSession()
+    const all = records()
     const p = S().profile
     return {
       today: t, week: programWeek(p.start_date, t), weeks: null, body_model: p.body_model, sets: weekSets(weekStart(t)),
       has_program: false, next_program: null, units: p.units, plan: [],
       open_workout: open ? { id: open.id, name: OWN_WORKOUT, performed_on: open.performed_on, started_at: open.started_at, sets_done: open.sets.filter(isHard).length } : null,
-      recent: finished().slice(0, 5).map(summaryOf),
+      recent: finished().slice(0, 5).map((s) => summaryOf(s, all)),
     }
   },
 
@@ -225,7 +242,13 @@ export const guestApi: GuestApi = {
     return {
       id: s.id, name: OWN_WORKOUT, template_id: null, performed_on: s.performed_on, started_at: s.started_at, finished_at: s.finished_at,
       duration_min: s.duration_min, notes: s.notes, effort: s.effort, units: S().profile.units, coach_notes: null, plan: [], sets: s.sets.map((x) => ({ ...x })),
+      records: s.finished_at ? records().filter((r) => r.session_id === s.id) : [],
     }
+  },
+
+  recordBests(sessionId: string, exerciseIds: string[]): Record<string, Bests> {
+    const all = bestsFrom(recordSessions().filter((s) => s.id !== sessionId), recordInfo())
+    return Object.fromEntries(exerciseIds.filter((id) => all[id]).map((id) => [id, all[id]]))
   },
 
   lastTime(sessionId: string, exerciseIds: string[]): Record<string, LastTime> {
@@ -234,7 +257,7 @@ export const guestApi: GuestApi = {
       .sort((a, b) => b.performed_on.localeCompare(a.performed_on) || (b.started_at ?? '').localeCompare(a.started_at ?? ''))
     for (const id of exerciseIds) {
       const s = before.find((x) => x.sets.some((l) => l.exercise_id === id && !l.is_warmup))
-      if (s) out[id] = { date: s.performed_on, sets: inSetOrder(s.sets.filter((l) => l.exercise_id === id && !l.is_warmup).map(({ set_number, weight_kg, reps, rpe, drop_of }) => ({ set_number, weight_kg, reps, rpe, drop_of: drop_of ?? null }))) }
+      if (s) out[id] = { date: s.performed_on, sets: inSetOrder(s.sets.filter((l) => l.exercise_id === id && !l.is_warmup).map(({ set_number, weight_kg, reps, rpe, drop_of, duration_s, distance_m, level, avg_hr }) => ({ set_number, weight_kg, reps, rpe, drop_of: drop_of ?? null, ...(duration_s != null ? { duration_s, distance_m, level, avg_hr } : {}) }))) }
     }
     return out
   },
@@ -358,12 +381,12 @@ export const guestApi: GuestApi = {
       today: today(), start_date: p.start_date, goal_weight_kg: p.goal_weight_kg,
       days: Object.entries(S().days).map(([date, l]) => ({ date, weight_kg: l.weight_kg, steps: l.steps, water_ml: l.water_ml, sleep_h: l.sleep_hours })),
       meals: S().meals.map((m) => ({ date: m.date, calories: m.calories, protein_g: m.protein_g, on_plan: m.on_plan })),
-      targets: [], programs: [], check_ins: [],
+      targets: [], programs: [], check_ins: [], records: records(),
       sessions: finished().map((s) => ({
         date: s.performed_on, template_id: null,
         sets: s.sets.filter((x) => !x.is_warmup).map((x) => ({
           exercise_id: x.exercise_id, name: lib.get(x.exercise_id)?.name ?? 'Exercise', kg: x.weight_kg, reps: x.reps, rpe: x.rpe,
-          drop: x.drop_of != null, primary: lib.get(x.exercise_id)?.primary ?? [],
+          drop: x.drop_of != null, primary: lib.get(x.exercise_id)?.primary ?? [], duration_s: x.duration_s ?? null, distance_m: x.distance_m ?? null,
         })),
       })),
     }

@@ -10,11 +10,13 @@ import type {
   LibraryExercise, Meal, MessageThread, MuscleDetail, NextProgram, Person, PlannedExercise, Program, ProgramClientRow,
   ProgramTemplateRow, ProgramWorkout, QueueItem, SetWrite, Targets, TodayWorkout, TrainWeek, WorkoutLog, WorkoutSummary,
 } from './api'
+import { bestsFrom, findRecords, type Bests, type ExerciseInfo, type PersonalRecord, type RecordSession } from './records'
+import type { CardioZone } from './cardio'
 import type { ClientStatus, DietType, ExerciseLevel as Level, GoalType, TrainLocation } from '@/types/db'
 import { addDays, pinToday } from './dates'
 import { bodyWeight } from './units'
 import { ApiError } from './backend'
-import { inSetOrder, minutesSince, OWN_WORKOUT, summarize, weekPlan, type PlanTemplate } from './workouts'
+import { BODYWEIGHT, inSetOrder, minutesSince, OWN_WORKOUT, summarize, weekPlan, type PlanTemplate } from './workouts'
 import { generateProgram } from './programGen'
 import { mondayOf, plusDays, progressFrom, type Period, type ProgressDetail, type ProgressRaw } from './progress'
 import { weightSignals } from './forecast'
@@ -61,7 +63,7 @@ const workout: TodayWorkout = {
   name: 'Full body C',
   duration_min: 50,
   sets_done: 3,
-  sets_total: 19,
+  sets_total: 20,
   exercises: [
     { name: 'Back squat', sets: 4, reps: '6', weight_kg: 82.5 },
     { name: 'Romanian deadlift', sets: 3, reps: '8', weight_kg: 70 },
@@ -69,6 +71,7 @@ const workout: TodayWorkout = {
     { name: 'Seated cable row', sets: 3, reps: '12', weight_kg: 45 },
     { name: 'Walking lunge', sets: 3, reps: '10', note: 'each leg' },
     { name: 'Plank', sets: 3, reps: '45 s' },
+    { name: 'Stationary bike', sets: 1, reps: '10 min', plan: '10 min · easy' },
   ],
 }
 
@@ -131,7 +134,7 @@ const sets: Record<MuscleGroup, number> = {
 
 // Exercise library: muscle roles drive the body map (each working set counts
 // once for every primary muscle of its exercise).
-const library: { name: string; level: ExerciseLevel; equipment: string; primary: MuscleGroup[]; secondary: MuscleGroup[]; week: number; cue: string }[] = [
+const library: { name: string; level: ExerciseLevel; equipment: string; primary: MuscleGroup[]; secondary: MuscleGroup[]; week: number; cue: string; kind?: 'cardio' }[] = [
   { name: "Barbell bench press", level: 'intermediate', equipment: 'barbell', primary: ['chest'], secondary: ['triceps', 'shoulders'], week: 0, cue: "Feet planted, bar to mid-chest, press back over the shoulders." },
   { name: "Dumbbell bench press", level: 'beginner', equipment: 'dumbbells', primary: ['chest'], secondary: ['triceps', 'shoulders'], week: 6, cue: "Shoulder blades pinned, elbows about 45 degrees." },
   { name: "Incline dumbbell press", level: 'beginner', equipment: 'dumbbells', primary: ['chest'], secondary: ['shoulders', 'triceps'], week: 3, cue: "Bench at 30 degrees, lower to the upper chest." },
@@ -193,12 +196,30 @@ const library: { name: string; level: ExerciseLevel; equipment: string; primary:
   { name: "Standing calf raise", level: 'beginner', equipment: 'machine', primary: ['calves'], secondary: [], week: 4, cue: "Full stretch at the bottom, pause at the top." },
   { name: "Seated calf raise", level: 'beginner', equipment: 'machine', primary: ['calves'], secondary: [], week: 0, cue: "Pause in the stretch." },
   { name: "Jump rope", level: 'beginner', equipment: 'jump rope', primary: ['calves'], secondary: ['quads'], week: 0, cue: "Light, quick bounces on the balls of the feet." },
+  // Cardio (0026): logged by time and distance; no muscles, so the body map leaves it out.
+  ...([
+    ['Treadmill run', 'beginner', 'treadmill', 'Run tall with quick, light steps; hold the rails only to get on and off.'],
+    ['Treadmill walk', 'beginner', 'treadmill', 'Walk tall with an easy arm swing; raise the incline rather than holding on.'],
+    ['Outdoor run', 'beginner', 'outdoors', 'Easy runs at a pace you could talk at, unless the plan says otherwise.'],
+    ['Brisk walk', 'beginner', 'outdoors', 'Fast enough to breathe a little harder, still able to talk.'],
+    ['Hiking', 'beginner', 'outdoors', 'Shorter steps uphill, and keep a steady effort rather than a steady pace.'],
+    ['Cycling', 'beginner', 'bike', 'Outdoors: a steady cadence, easier gears on the climbs.'],
+    ['Stationary bike', 'beginner', 'bike', 'Saddle at hip height, a slight bend in the knee at the bottom.'],
+    ['Air bike', 'intermediate', 'air bike', 'Push and pull the handles; the harder you go, the harder it gets.'],
+    ['Rowing machine', 'beginner', 'rower', 'Legs, then body, then arms; reverse the order on the way back.'],
+    ['Elliptical', 'beginner', 'elliptical', 'Stand tall, push through the whole foot.'],
+    ['Stair climber', 'beginner', 'stair climber', 'Light hands on the rails, stand tall, full steps.'],
+    ['Swimming', 'beginner', 'pool', 'Any stroke; log the time and the distance swum.'],
+    ['Ski erg', 'intermediate', 'ski erg', 'Hinge at the hips and pull down with the arms together.'],
+    ['HIIT intervals', 'intermediate', 'bodyweight', 'Hard efforts with easy recovery between; log each round.'],
+  ] as [string, ExerciseLevel, string, string][]).map(([name, level, equipment, cue]) => ({ name, level, equipment, primary: [] as MuscleGroup[], secondary: [] as MuscleGroup[], week: 0, cue, kind: 'cardio' as const })),
 ]
 
 const exId = (name: string) => `ex-${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`
 const exerciseLibrary: LibraryExercise[] = library.map((e) => ({
-  id: exId(e.name), name: e.name, level: e.level, equipment: e.equipment, cue: e.cue, primary: e.primary, secondary: e.secondary,
+  id: exId(e.name), name: e.name, level: e.level, equipment: e.equipment, cue: e.cue, primary: e.primary, secondary: e.secondary, kind: e.kind ?? 'strength',
 }))
+const isCardio = (exerciseId: string) => exerciseById.get(exerciseId)?.kind === 'cardio'
 const exerciseById = new Map(exerciseLibrary.map((e) => [e.id, e]))
 
 // ---------- Aisha's program and workout log ----------
@@ -207,6 +228,9 @@ const exerciseById = new Map(exerciseLibrary.map((e) => [e.id, e]))
 const PROGRAM_START = '2026-08-24'
 
 let slotSeq = 0
+/** A cardio slot: rounds of minutes at a zone (rest between rounds). */
+const cardioSlot = (name: string, sets: number, minutes: number, zone: CardioZone, rest: number | null = null): PlannedExercise =>
+  ({ ...slot(name, sets, `${minutes} min`, null, rest), minutes, distance_m: null, zone })
 const slot = (name: string, sets: number, reps: string, rpe: number | null = 8, rest: number | null = 90): PlannedExercise => {
   const e = exerciseLibrary.find((x) => x.name === name)!
   return { template_exercise_id: `te-${++slotSeq}`, exercise_id: e.id, name, cue: e.cue, sets, reps, rpe, rest_seconds: rest, notes: null }
@@ -226,6 +250,7 @@ const templates: PlanTemplate[] = [
   { id: 'wt-full-c', name: 'Full body C', day_of_week: 0, notes: 'Keep the RDLs light: lower back first.', exercises: [
     slot('Back squat', 4, '6', 8, 180), slot('Romanian deadlift', 3, '8', 7, 120), { ...slot('Dumbbell bench press', 3, '10', 8, null), superset: 'A' },
     { ...slot('Seated cable row', 3, '12'), superset: 'A' }, slot('Walking lunge', 3, '10', 8, 60), slot('Plank', 3, '45', null, 45),
+    cardioSlot('Stationary bike', 1, 10, 'easy'),
   ] },
 ]
 
@@ -257,6 +282,12 @@ const sessions = new Map<string, DemoSession>([
     ...logged(lowerA, 0, [[82.5, 6, 8], [82.5, 6, 8], [82.5, 6, 8.5], [82.5, 6, 9]]), ...logged(lowerA, 1, [[70, 8, 7], [70, 8, 7.5], [70, 8, 8]]),
     ...logged(lowerA, 2, [[12, 10, 8], [12, 10, 8], [12, 10, 8.5]]), ...logged(lowerA, 3, [[60, 12, 9], [60, 12, 9], [60, 11, 9.5]]),
   ] }],
+  ['w-run-prev', { id: 'w-run-prev', template_id: null, performed_on: '2026-09-25', started_at: '2026-09-25T07:00:00', finished_at: '2026-09-25T07:30:00', duration_min: 30, notes: '', effort: 5, sets: [
+    { exercise_id: exId('Treadmill run'), template_exercise_id: null, set_number: 1, weight_kg: null, reps: null, rpe: 6, duration_s: 1500, distance_m: 4000, level: 1, avg_hr: 151 },
+  ] }],
+  ['w-run', { id: 'w-run', template_id: null, performed_on: '2026-10-02', started_at: '2026-10-02T07:00:00', finished_at: '2026-10-02T07:36:00', duration_min: 36, notes: 'First 5 km without stopping.', effort: 6, sets: [
+    { exercise_id: exId('Treadmill run'), template_exercise_id: null, set_number: 1, weight_kg: null, reps: null, rpe: 7, duration_s: 1800, distance_m: 5000, level: 1, avg_hr: 156 },
+  ] }],
   ['w-today', { id: 'w-today', template_id: fullC.id, performed_on: TODAY, started_at: `${TODAY}T17:55:00`, finished_at: null, duration_min: null, notes: '', sets: [
     ...logged(fullC, 0, [[82.5, 6, 8], [82.5, 6, 8.5], [82.5, 6, 9]]),
   ] }],
@@ -265,12 +296,16 @@ const sessions = new Map<string, DemoSession>([
 const sessionName = (s: DemoSession) => (s.template_id ? workoutNameOf(s.template_id) : null) ?? OWN_WORKOUT
 
 function sessionSummary(s: DemoSession): WorkoutSummary {
+  return { ...baseSummary(s), records: s.finished_at && !s.skipped ? aishaRecords().filter((r) => r.session_id === s.id) : [] }
+}
+
+function baseSummary(s: DemoSession): WorkoutSummary {
   return summarize(
     { id: s.id, name: sessionName(s), performed_on: s.performed_on, finished: s.finished_at != null, duration_min: s.duration_min, notes: s.notes || null, effort: s.effort ?? null, skipped: !!s.skipped },
     s.sets.filter((x) => !x.is_warmup).map((x) => {
       const e = exerciseById.get(x.exercise_id)
       const slotOf = s.template_id ? planWorkout(s.template_id)?.exercises.find((p) => p.template_exercise_id === x.template_exercise_id) : undefined
-      return { ...x, name: e?.name ?? 'Exercise', primary: e?.primary ?? [], superset: slotOf?.superset ?? null }
+      return { ...x, name: e?.name ?? 'Exercise', primary: e?.primary ?? [], superset: slotOf?.superset ?? null, cardio: e?.kind === 'cardio' }
     }),
   )
 }
@@ -444,7 +479,10 @@ programs.set('prog-aisha', {
   level: 'intermediate', days_per_week: 4, start_date: PROGRAM_START, draft_start: null,
   workouts: templates.map((t) => ({
     id: t.id, name: t.name, day_of_week: t.day_of_week, notes: t.notes ?? '',
-    exercises: t.exercises.map((x) => ({ id: x.template_exercise_id, exercise_id: x.exercise_id, name: x.name, sets: x.sets, reps: x.reps, rpe: x.rpe, rest_seconds: x.rest_seconds, notes: x.notes ?? '', superset: x.superset ?? null })),
+    exercises: t.exercises.map((x) => ({
+      id: x.template_exercise_id, exercise_id: x.exercise_id, name: x.name, sets: x.sets, reps: x.reps, rpe: x.rpe, rest_seconds: x.rest_seconds, notes: x.notes ?? '',
+      superset: x.superset ?? null, minutes: x.minutes ?? null, distance_m: x.distance_m ?? null, zone: x.zone ?? null,
+    })),
   })),
 })
 for (const r of roster) {
@@ -495,6 +533,7 @@ function planOf(p: DemoProgram): PlanTemplate[] {
     exercises: w.exercises.map((x): PlannedExercise => ({
       template_exercise_id: x.id!, exercise_id: x.exercise_id, name: x.name, sets: x.sets, reps: x.reps, rpe: x.rpe,
       rest_seconds: x.rest_seconds, cue: exerciseById.get(x.exercise_id)?.cue ?? null, notes: x.notes || null, superset: x.superset ?? null,
+      minutes: x.minutes ?? null, distance_m: x.distance_m ?? null, zone: x.zone ?? null,
     })),
   }))
 }
@@ -586,6 +625,11 @@ function aishaProgressRaw(): ProgressRaw {
     const generated: ProgressRaw['sessions'] = []
     const prog = programs.get('prog-aisha')!
     const loads: Record<string, number> = {}
+    // Loads lead up to her logged workouts (from Sep 27): reaching those loads by her last generated week, up every other week.
+    const logged = new Map<string, number>()
+    for (const id of ['w-prev-c', 'w-upper-a', 'w-lower-a']) {
+      for (const x of sessions.get(id)?.sets ?? []) if (x.weight_kg != null && !x.is_warmup && x.drop_of == null) logged.set(x.exercise_id, Math.min(logged.get(x.exercise_id) ?? Infinity, x.weight_kg))
+    }
     for (let d = PROGRAM_START; d <= TODAY; d = plusDays(d, 1)) {
       const week = Math.floor((new Date(`${d}T00:00:00`).getTime() - new Date(`${PROGRAM_START}T00:00:00`).getTime()) / (7 * 86_400_000))
       const dow = new Date(`${d}T00:00:00`).getDay()
@@ -608,10 +652,16 @@ function aishaProgressRaw(): ProgressRaw {
         for (const w of prog.workouts.filter((x) => x.day_of_week === dow)) {
           generated.push({
             date: d, template_id: w.id,
-            sets: w.exercises.flatMap((x) => {
+            sets: w.exercises.flatMap((x): ProgressRaw['sessions'][number]['sets'] => {
               const e = exerciseById.get(x.exercise_id)
-              const start = loads[x.exercise_id] ??= e?.equipment === 'bodyweight' ? 0 : e?.equipment === 'barbell' ? 60 : 12
-              const kg = start ? Math.round((start + week * (e?.equipment === 'barbell' ? 2.5 : 1)) * 2) / 2 : null
+              if (e?.kind === 'cardio') {
+                const s = Math.round((x.minutes ?? 10) * 60)
+                return [{ exercise_id: x.exercise_id, name: x.name, kg: null, reps: null, rpe: null, primary: [], duration_s: s, distance_m: Math.round((s / 60) * (380 + week * 10)) }]
+              }
+              const step = e?.equipment === 'barbell' || e?.equipment === 'cable' || e?.equipment === 'machine' ? 2.5 : 1
+              const target = logged.get(x.exercise_id)
+              const start = loads[x.exercise_id] ??= e?.equipment === 'bodyweight' ? 0 : target != null ? target - step * 2 : e?.equipment === 'barbell' ? 60 : 12
+              const kg = start ? Math.round((start + Math.floor(week / 2) * step) * 2) / 2 : null
               // RPE as logged: the planned RPE, half a point either side from set to set.
               return Array.from({ length: x.sets }, (_, n) => ({
                 exercise_id: x.exercise_id, name: x.name, kg, reps: Number(String(x.reps).match(/\d+/)?.[0] ?? 8),
@@ -632,18 +682,48 @@ function aishaProgressRaw(): ProgressRaw {
     }
   }
   const { generated, ...rest } = progressRawCache
+  const weighIns = rest.days.flatMap((d) => (d.weight_kg != null ? [{ date: d.date, kg: d.weight_kg }] : []))
   const logged = [...sessions.values()].filter((s) => s.finished_at && !s.skipped).map((s) => ({
     date: s.performed_on, template_id: s.template_id,
-    sets: s.sets.filter((x) => !x.is_warmup).map((x) => ({ exercise_id: x.exercise_id, name: exerciseById.get(x.exercise_id)?.name ?? 'Exercise', kg: x.weight_kg, reps: x.reps, rpe: x.rpe, drop: x.drop_of != null, primary: exerciseById.get(x.exercise_id)?.primary ?? [] })),
+    sets: s.sets.filter((x) => !x.is_warmup).map((x) => ({
+      exercise_id: x.exercise_id, name: exerciseById.get(x.exercise_id)?.name ?? 'Exercise', kg: x.weight_kg, reps: x.reps, rpe: x.rpe, drop: x.drop_of != null,
+      primary: exerciseById.get(x.exercise_id)?.primary ?? [], duration_s: x.duration_s ?? null, distance_m: x.distance_m ?? null,
+    })),
   }))
   return {
     ...rest,
     targets: (targetVersions[aisha.id] ?? []).map((v) => ({ from: v.effective_from, calories: v.targets.calories, protein_g: v.targets.protein_g, water_ml: v.targets.water_ml || null, steps: v.targets.steps || null, sleep_h: v.targets.sleep_h || null })),
     programs: [...programs.values()].filter((p) => p.client_id === aisha.id && p.assigned && p.start_date && p.start_date <= TODAY)
       .map((p) => ({ start_date: p.start_date!, weeks: p.weeks, planned: p.workouts.filter((w) => w.day_of_week != null).length })),
-    sessions: [...generated, ...logged.filter((s) => s.date >= '2026-09-27')],
+    // The generated weeks stand in for her program's workouts before Sep 27; her own workouts count as logged.
+    sessions: [...generated, ...logged.filter((s) => s.date >= '2026-09-27' || !s.template_id)],
+    // Her generated weeks set the baseline; records come from the workouts she logged.
+    records: findRecords(aishaRecordSessions(), recordInfo(), weighIns).filter((r) => !r.session_id.startsWith('gen-')),
   }
 }
+
+// ---------- Aisha's personal records (lib/records.ts), from the same workouts ----------
+
+const recordInfo = (): ExerciseInfo => new Map(exerciseLibrary.map((e) => [e.id, { name: e.name, bodyweight: BODYWEIGHT.has(e.equipment), cardio: e.kind === 'cardio' }]))
+
+/** Her generated history and the logged workouts, finished ones only. */
+function aishaRecordSessions(): RecordSession[] {
+  if (!progressRawCache) aishaProgressRaw()
+  const generated = progressRawCache!.generated.map((g): RecordSession => {
+    const n: Record<string, number> = {}
+    return {
+      id: `gen-${g.date}-${g.template_id}`, date: g.date, started_at: null,
+      sets: g.sets.map((x) => ({
+        exercise_id: x.exercise_id, set_number: (n[x.exercise_id] = (n[x.exercise_id] ?? 0) + 1), weight_kg: x.kg, reps: x.reps, rpe: x.rpe ?? null,
+        duration_s: x.duration_s ?? null, distance_m: x.distance_m ?? null,
+      })),
+    }
+  })
+  const logged = [...sessions.values()].filter((s) => s.finished_at && !s.skipped).map((s): RecordSession => ({ id: s.id, date: s.performed_on, started_at: s.started_at, sets: s.sets }))
+  return [...generated, ...logged]
+}
+
+const aishaRecords = (): PersonalRecord[] => aishaProgressRaw().records ?? []
 
 // Other clients' Progress for the coach's Insights card and list flags: their
 // weekly weights (three weigh-ins a week), nothing else logged. Goal weights are
@@ -760,6 +840,7 @@ export const demo = {
         { exercise: 'Romanian deadlift', reps: 8, kg: 70, change: 10 },
         { exercise: 'Dumbbell bench press', reps: 10, kg: 18, change: 2 },
       ],
+      recent_records: aishaRecords().filter((r) => r.date >= addDays(TODAY, -6)).sort((a, b) => b.date.localeCompare(a.date)),
     }
   },
 
@@ -817,7 +898,13 @@ export const demo = {
       coach_notes: planWorkout(s.template_id)?.notes ?? null,
       plan: planWorkout(s.template_id)?.exercises ?? [],
       sets: s.sets.map((x) => ({ ...x })),
+      records: s.finished_at && !s.skipped ? aishaRecords().filter((r) => r.session_id === s.id) : [],
     }
+  },
+
+  recordBests(sessionId: string, exerciseIds: string[]): Record<string, Bests> {
+    const all = bestsFrom(aishaRecordSessions().filter((s) => s.id !== sessionId), recordInfo())
+    return Object.fromEntries(exerciseIds.filter((id) => all[id]).map((id) => [id, all[id]]))
   },
 
   lastTime(sessionId: string, exerciseIds: string[]): Record<string, LastTime> {
@@ -825,7 +912,7 @@ export const demo = {
     const before = [...sessions.values()].filter((s) => s.id !== sessionId).sort((a, b) => (b.started_at ?? '').localeCompare(a.started_at ?? ''))
     for (const id of exerciseIds) {
       const s = before.find((x) => x.sets.some((l) => l.exercise_id === id && !l.is_warmup))
-      if (s) out[id] = { date: s.performed_on, sets: inSetOrder(s.sets.filter((l) => l.exercise_id === id && !l.is_warmup).map(({ set_number, weight_kg, reps, rpe, drop_of }) => ({ set_number, weight_kg, reps, rpe, drop_of: drop_of ?? null }))) }
+      if (s) out[id] = { date: s.performed_on, sets: inSetOrder(s.sets.filter((l) => l.exercise_id === id && !l.is_warmup).map(({ set_number, weight_kg, reps, rpe, drop_of, duration_s, distance_m, level, avg_hr }) => ({ set_number, weight_kg, reps, rpe, drop_of: drop_of ?? null, ...(duration_s != null ? { duration_s, distance_m, level, avg_hr } : {}) }))) }
     }
     return out
   },
@@ -840,7 +927,7 @@ export const demo = {
     }
     if (set.is_warmup && s.sets.some((x) => x.exercise_id === set.exercise_id && x.drop_of === set.set_number)) throw new ApiError(422, 'This set has drops. Remove them first.')
     // The body map counts hard sets: a working set and its drops once, warm-ups never.
-    const counted = (x: SetWrite | undefined) => (x && !x.is_warmup && x.drop_of == null ? 1 : 0)
+    const counted = (x: SetWrite | undefined) => (x && !x.is_warmup && x.drop_of == null && !isCardio(x.exercise_id) ? 1 : 0)
     const change = counted(set) - counted(i >= 0 ? s.sets[i] : undefined)
     if (i >= 0) s.sets[i] = { ...set }
     else s.sets.push({ ...set })
@@ -1221,11 +1308,16 @@ export const demo = {
     if (clash) throw new ApiError(409, clash.custom ? 'You already have an exercise with this name.' : 'The library already has this one. Pick it from the list instead.')
     const e: LibraryExercise = {
       id: d.id ?? `ex-custom-${crypto.randomUUID().slice(0, 8)}`, name, level: d.level, equipment: d.equipment.trim(),
-      cue: d.cue.trim() || null, primary: [...d.primary], secondary: [...d.secondary], custom: true,
+      cue: d.cue.trim() || null, custom: true, kind: d.kind,
+      // Cardio has no muscles (as save_exercise, 0026).
+      primary: d.kind === 'cardio' ? [] : [...d.primary], secondary: d.kind === 'cardio' ? [] : [...d.secondary],
     }
     const i = exerciseLibrary.findIndex((x) => x.id === e.id)
     if (i >= 0) {
       if (!exerciseLibrary[i].custom) throw new ApiError(404, "That exercise doesn't exist (or isn't yours).")
+      const used = [...sessions.values()].some((x) => x.sets.some((l) => l.exercise_id === e.id))
+        || [...programs.values()].some((p) => p.workouts.some((w) => w.exercises.some((x) => x.exercise_id === e.id)))
+      if ((exerciseLibrary[i].kind ?? 'strength') !== d.kind && used) throw new ApiError(409, "This exercise is in a program or a logged workout, so it can't switch between strength and cardio.")
       exerciseLibrary[i] = e
     } else exerciseLibrary.push(e)
     exerciseLibrary.sort((a, b) => a.name.localeCompare(b.name))

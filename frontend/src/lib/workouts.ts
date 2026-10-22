@@ -6,6 +6,7 @@ import type { MuscleGroup, UnitSystem } from '@/types/db'
 import type { LoggedSet, PlannedExercise, PlannedWorkout, WorkoutSummary } from './api'
 import { addDays, weekStart } from './dates.ts'
 import { fromUnit, inputFromKg, int, kgFromInput, LOAD_STEP, loadWeight, roundTo, toUnit, unitLabel } from './units.ts'
+import { boutText, cardioTotals } from './cardio.ts'
 
 export interface PlanTemplate { id: string; name: string; day_of_week: number | null; notes: string | null; exercises: PlannedExercise[] }
 export interface PlanSession { id: string; workout_template_id: string | null; performed_on: string; finished: boolean; skipped?: boolean; notes?: string | null }
@@ -69,6 +70,8 @@ export interface SummarySet extends LoggedSet {
   primary: MuscleGroup[]
   /** the planned slot's superset label, if any */
   superset?: string | null
+  /** a cardio exercise: the set is a bout (time, distance), not weight × reps */
+  cardio?: boolean
 }
 
 // ---------- Drop sets ----------
@@ -81,8 +84,8 @@ export function inSetOrder<T extends { set_number: number; drop_of?: number | nu
   return [...out, ...drops.filter((d) => !out.includes(d))] // a drop whose set is gone, last
 }
 
-/** Hard sets: a working set and its drops count as one. (Warm-ups are left out before this.) */
-export const hardSets = (sets: { drop_of?: number | null }[]) => sets.filter((s) => s.drop_of == null).length
+/** Hard sets: a working set and its drops count as one; cardio bouts aren't sets. (Warm-ups are left out before this.) */
+export const hardSets = (sets: { drop_of?: number | null; duration_s?: number | null }[]) => sets.filter((s) => s.drop_of == null && s.duration_s == null).length
 
 /** Training volume: every set, drops included (Σ weight × reps, kg). */
 export const setVolume = (sets: { weight_kg: number | null; reps: number | null }[]) => sets.reduce((a, s) => a + (s.weight_kg ?? 0) * (s.reps ?? 0), 0)
@@ -184,11 +187,15 @@ export function summarize(
   const muscles = new Set<MuscleGroup>()
   for (const x of sets) {
     const e = byExercise.get(x.exercise_id) ?? { name: x.name, sets: [], superset: x.superset ?? null }
-    e.sets.push({ set_number: x.set_number, weight_kg: x.weight_kg, reps: x.reps, rpe: x.rpe, drop_of: x.drop_of ?? null })
+    e.sets.push({
+      set_number: x.set_number, weight_kg: x.weight_kg, reps: x.reps, rpe: x.rpe, drop_of: x.drop_of ?? null,
+      ...(x.duration_s != null ? { duration_s: x.duration_s, distance_m: x.distance_m ?? null, level: x.level ?? null, avg_hr: x.avg_hr ?? null } : {}),
+    })
     byExercise.set(x.exercise_id, e)
     x.primary.forEach((m) => muscles.add(m))
   }
   const exercises = [...byExercise.values()]
+  const cardio = cardioTotals(sets)
   const groups = new Map<string, string[]>()
   for (const e of exercises) if (e.superset) groups.set(e.superset, [...(groups.get(e.superset) ?? []), e.name])
   return {
@@ -198,6 +205,8 @@ export function summarize(
     // A working set and its drops are one hard set; volume counts every set.
     sets: hardSets(sets),
     volume_kg: Math.round(setVolume(sets) * 10) / 10, // rounded for display, after any lb conversion
+    cardio_s: cardio.seconds,
+    cardio_m: cardio.metres,
     muscles: [...muscles],
     exercises: exercises.map((e) => ({ name: e.name, sets: inSetOrder(e.sets) })),
     supersets: [...groups.values()].filter((g) => g.length > 1),
@@ -223,9 +232,13 @@ export const toKg = kgFromInput
 
 export const volumeLabel = (kg: number, u: UnitSystem) => `${int(toUnit(kg, u))} ${unitLabel(u)}`
 
-/** "80 kg × 6 @8, 60 kg × 8 → 45 kg × 8 → 30 kg × 10": each set, its drops after an arrow (0.1 lb / 0.5 kg). */
+/**
+ * "80 kg × 6 @8, 60 kg × 8 → 45 kg × 8 → 30 kg × 10": each set, its drops after
+ * an arrow (0.1 lb / 0.5 kg). Cardio bouts: "30:00 · 5.2 km · 5:46 /km".
+ */
 export function setsLine(sets: LoggedSet[], u: UnitSystem): string {
-  const one = (s: LoggedSet) => `${s.weight_kg != null ? loadWeight(s.weight_kg, u) : 'BW'} × ${s.reps ?? '–'}${s.rpe != null ? ` @${s.rpe}` : ''}`
+  const one = (s: LoggedSet) => (s.duration_s != null ? boutText(s, u)
+    : `${s.weight_kg != null ? loadWeight(s.weight_kg, u) : 'BW'} × ${s.reps ?? '–'}${s.rpe != null ? ` @${s.rpe}` : ''}`)
   const parts: string[] = []
   for (const s of inSetOrder(sets)) {
     if (s.drop_of != null && parts.length) parts[parts.length - 1] += ` → ${one(s)}`

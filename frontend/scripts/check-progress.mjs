@@ -84,6 +84,8 @@ try {
         + ` · section tabs ${html.includes('section-tabs')} · Insights card ${order} · "Estimates" ${html.includes('>Estimates<')} · band ${html.includes('opacity="0.14"')}`)
       if (insights < 0 || (name === 'phone') !== (order === 'insights first')) problems.push(`${name} ${units}: Insights card ${order}`)
       if (!unit.test(html)) problems.push(`${name} ${units}: unit not shown`)
+      // Personal records: a card by lift and rings on the strength chart (desktop and tablet show every chart).
+      if (name !== 'phone' && !(html.includes('<h3>Personal records</h3>') && html.includes('kit-dot mark'))) problems.push(`${name} ${units}: no records card or strength-chart rings`)
     }
   }
   for (const units of ['imperial', 'metric']) {
