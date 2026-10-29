@@ -88,10 +88,34 @@ export const pathFitsRole = (path: string, role: AuthUser['role']) =>
  * window. This is for convenience only: RLS and the backend's coach checks
  * are what actually protect coach data.
  */
-export function RequireAuth({ role, children }: { role: 'client' | 'coach'; children: ReactNode }) {
+/**
+ * Whether this browser holds a sign-in (Supabase's saved session) or a guest
+ * session, read without loading anything. index.html runs the same test before
+ * the app starts, to hide the pre-rendered landing page from signed-in people.
+ */
+export function hasStoredSession(): boolean {
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i) ?? ''
+      if (/^sb-.+-auth-token$/.test(k) || (k === 'yuktara.guest.session' && localStorage.getItem(k) === '1')) return true
+    }
+  } catch {
+    /* storage blocked: treat as signed out */
+  }
+  return false
+}
+
+/**
+ * `signedOut`: shown at exactly / to anyone not signed in (the landing page),
+ * also while the session loads when nothing is stored, so the pre-rendered page
+ * stays put. Everywhere else, signed-out visitors go to /login.
+ */
+export function RequireAuth({ role, children, signedOut }: { role: 'client' | 'coach'; children: ReactNode; signedOut?: ReactNode }) {
   const { status, user } = useAuth()
   const location = useLocation()
-  if (status === 'loading') return <PageLoading />
+  const atRoot = location.pathname === '/'
+  if (status === 'loading') return signedOut && atRoot && !hasStoredSession() ? <>{signedOut}</> : <PageLoading />
+  if (!user && signedOut && atRoot) return <>{signedOut}</>
   if (!user) return <Navigate to="/login" replace state={{ from: location.pathname }} />
   if (user.role !== role) return <Navigate to={homeFor(user.role)} replace />
   if (user.role === 'client' && !user.setupDone) return <Navigate to="/login" replace />

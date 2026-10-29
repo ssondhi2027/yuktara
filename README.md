@@ -165,7 +165,7 @@ make lint            # ruff (check and format) + TypeScript typecheck
 make walkthrough     # the whole flow on the local stack, as real users (needs `make dev` running)
 ```
 
-- **Frontend:** `npm run typecheck`, `npm test` (Node's built-in test runner: program generator, units, targets, progress calculations, forecasts and insight rules, profile and exercise checks, food amounts and meal plans, skipped workouts, drop sets and supersets, personal records and milestones, cardio, the guest store), `npm run build`, `npm run check:progress` (renders the Progress page in Node for phone, tablet and desktop, in kg and lb) and `npm run check:guest` (guest mode with Supabase and the network stubbed to fail: nothing may reach them).
+- **Frontend:** `npm run typecheck`, `npm test` (Node's built-in test runner: program generator, units, targets, progress calculations, forecasts and insight rules, profile and exercise checks, food amounts and meal plans, skipped workouts, drop sets and supersets, personal records and milestones, cardio, the public pages' search tags, the guest store), `npm run build`, `npm run check:progress` (renders the Progress page in Node for phone, tablet and desktop, in kg and lb) and `npm run check:guest` (guest mode with Supabase and the network stubbed to fail: nothing may reach them).
 - **Walkthrough** (`backend/scripts/walkthrough.py`): sign-up and confirmation, setup, targets, logging, units, coach pages, check-in and review, a generated program and logged workouts, messages, and every query the apps make, all under RLS.
 
 CI (`.github/workflows/ci.yml`) runs the frontend checks, the backend lint and tests, the database tests and dependency audits on every pull request.
@@ -178,10 +178,26 @@ Pushing to `main` runs `.github/workflows/db-migrate.yml`: database migrations (
 | --- | --- |
 | Supabase | Confirm email on; Site URL and Redirect URLs; custom SMTP (see above) |
 | Render | `ENV=production`, `DATABASE_URL` (session pooler, port 5432), `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `ALLOWED_ORIGINS=https://<your site>,http://localhost:5173` |
-| Netlify | `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `VITE_API_URL` (your Render URL) |
+| Netlify | `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `VITE_API_URL` (your Render URL); `VITE_SITE_URL` if the site isn't `https://yuktara.netlify.app` (search tags, sitemap) |
 | GitHub (`production` environment) | Secrets `SUPABASE_ACCESS_TOKEN`, `SUPABASE_DB_PASSWORD`, `SUPABASE_PROJECT_REF`, `RENDER_DEPLOY_HOOK_URL`, `NETLIFY_BUILD_HOOK_URL`; variable `API_URL` for the keep-warm ping |
 
 Full list and the deploy order: [docs/api.md](docs/api.md#settings-and-secrets).
+
+## Search engines (SEO)
+
+The app itself is behind sign-in, so search engines see the public pages only:
+
+- **Pages:** the landing page at `/` (for anyone not signed in; signed-in users get their app there) and `/privacy`. Their text, titles, descriptions, FAQ and structured data are in `frontend/src/features/public/site.ts`.
+- **Pre-rendered:** `npm run build` ends with `scripts/prerender.mjs`, which saves those pages as finished HTML (`dist/index.html`, `dist/privacy/index.html`) with their title, description, canonical URL, Open Graph and Twitter tags (share image `public/og-image.png`, 1200 × 630) and JSON-LD (web app, FAQ). It also writes `dist/sitemap.xml` and `dist/robots.txt`, and `dist/app.html`, the plain app shell that Netlify serves for every app route (`noindex`).
+- **App pages stay out:** `robots.txt` disallows them and `netlify.toml` sends `X-Robots-Tag: noindex`.
+- **Site address:** `VITE_SITE_URL` in the build's environment, default `https://yuktara.netlify.app`.
+
+To get listed (done by hand, once):
+
+1. Netlify → Site configuration → **Change site name**: settle the final name now; changing it later changes every URL search engines know. If it isn't `yuktara`, set `VITE_SITE_URL` on Netlify.
+2. [Google Search Console](https://search.google.com/search-console): add a **URL prefix** property for `https://<name>.netlify.app/`, verify with the **HTML tag** method (add the tag to `frontend/index.html`, deploy, then press Verify), submit `sitemap.xml`, and use **URL inspection → Request indexing** on the home page.
+3. [Bing Webmaster Tools](https://www.bing.com/webmasters): import the site from Search Console (Bing also serves DuckDuckGo and Yahoo).
+4. Links from elsewhere help most: the GitHub README, your social profiles, Product Hunt, coaching communities and app directories.
 
 ## 3D body model
 

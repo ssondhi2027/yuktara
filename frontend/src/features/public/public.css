@@ -1,0 +1,132 @@
+/* Public pages (landing, privacy): mobile first, the app's tokens, light and dark. */
+.public { min-height: 100vh; background: var(--bg); color: var(--ink); }
+/* Wide screens use most of the width: up to 1760 px, with side padding that grows with the screen. */
+.public-wrap { width: 100%; max-width: 1760px; margin: 0 auto; padding: 0 clamp(16px, 4vw, 72px); }
+.public-wrap.narrow { max-width: 860px; }
+.public a:not(.btn) { color: inherit; text-underline-offset: 3px; }
+
+.public-header { position: sticky; top: 0; z-index: 5; background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
+.public-header .public-wrap { height: 60px; }
+.public-brand { display: inline-flex; align-items: center; gap: 10px; text-decoration: none; font-family: var(--font-head); font-weight: 700; font-size: 20px; }
+
+.public .eyebrow { margin: 0 0 8px; color: var(--leaf); }
+.public h1 { font-size: clamp(32px, 4.6vw, 76px); line-height: 1.04; letter-spacing: -0.02em; }
+.public h2 { font-size: clamp(24px, 4.5vw, 34px); line-height: 1.15; letter-spacing: -0.015em; }
+.public h3 { font-size: 17px; line-height: 1.3; }
+.public p { line-height: 1.6; }
+.public .lead { font-size: clamp(17px, 2.2vw, 19px); color: var(--ink-2); margin: 16px 0 24px; max-width: 34em; }
+.section-lead { color: var(--ink-2); margin: 10px 0 24px; max-width: 40em; }
+
+/* Hero */
+.public-hero { padding: 40px 0 48px; }
+.hero-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 32px; align-items: center; }
+@media (min-width: 900px) { .public-hero { padding: 56px 0 72px; } .hero-grid { grid-template-columns: 1.1fr 0.9fr; gap: clamp(40px, 5vw, 96px); } }
+@media (min-width: 1400px) { .public .lead { font-size: 21px; max-width: 36em; } }
+.hero-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 10px; }
+.hero-actions .btn { flex: 1 1 200px; }
+@media (min-width: 600px) { .hero-actions .btn { flex: 0 0 auto; } }
+.hero-actions.center { justify-content: center; }
+
+/* The example week */
+.week-sample { display: grid; gap: 14px; max-width: 420px; width: 100%; justify-self: center; box-shadow: 0 18px 40px rgb(18 58 43 / 0.12); }
+.sample-days { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(7, 1fr); gap: 8px; height: 96px; }
+.sample-days li { display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-3); }
+.sample-days i { display: block; width: 100%; border-radius: 8px; background: var(--leaf); }
+.sample-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 0; }
+.sample-stats div { background: var(--surface-2); border-radius: var(--radius-sm); padding: 10px; }
+.sample-stats dt { font-size: 12px; color: var(--ink-2); }
+.sample-stats dd { margin: 4px 0 0; font-size: 17px; }
+.sample-pr, .sample-checkin { display: flex; align-items: center; gap: 8px; font-size: 14px; padding: 10px 12px; border-radius: var(--radius-sm); }
+.sample-pr { background: var(--gold); color: var(--on-gold); font-weight: 600; }
+.sample-checkin { background: var(--mint); color: var(--mint-ink); }
+
+/* Sections */
+.public-section { padding: 48px 0; }
+@media (min-width: 900px) { .public-section { padding: 72px 0; } }
+.public-section.alt { background: var(--surface-2); }
+.feature-grid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
+@media (min-width: 640px) { .feature-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (min-width: 1000px) { .feature-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.feature { display: grid; align-content: start; gap: 10px; transition: transform 0.25s ease, box-shadow 0.25s ease, border-color 0.25s ease; }
+/* Hover (mouse and trackpad only): the card zooms in a little and lifts. */
+@media (hover: hover) {
+  .feature:hover { transform: scale(1.04); border-color: var(--line-strong); box-shadow: 0 18px 40px rgb(0 0 0 / 0.18); position: relative; z-index: 1; }
+  .feature:hover .feature-icon { background: var(--gold); color: var(--on-gold); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .feature { transition: border-color 0.25s ease, box-shadow 0.25s ease; }
+  .feature:hover { transform: none; }
+}
+.feature p { margin: 0; color: var(--ink-2); font-size: 15px; }
+.feature-icon { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 12px; background: var(--mint); color: var(--mint-ink); transition: background 0.25s ease, color 0.25s ease; }
+
+.steps { list-style: none; margin: 24px 0 0; padding: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+@media (min-width: 900px) { .steps { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.steps li { display: flex; gap: 14px; align-items: flex-start; min-width: 0; }
+.steps li > div, .trust-item > div { min-width: 0; }
+.steps p { margin: 6px 0 0; color: var(--ink-2); }
+.step-n { flex: none; display: grid; place-items: center; width: 36px; height: 36px; border-radius: 50%; background: var(--primary); color: var(--on-primary); font-family: var(--font-head); font-weight: 700; }
+
+.trust { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; }
+@media (min-width: 900px) { .trust { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.trust-item { display: flex; gap: 14px; align-items: flex-start; }
+.trust-item svg { flex: none; color: var(--leaf); margin-top: 2px; }
+.trust-item p { margin: 6px 0 0; color: var(--ink-2); }
+
+.faq { margin-top: 20px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
+/* One centred column: an opened answer never leaves a gap beside it. */
+.faq-wrap { max-width: 920px; text-align: center; }
+.faq-wrap .faq { text-align: left; margin-top: 24px; gap: 12px; }
+.faq details { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 0 22px; transition: border-color 0.15s; }
+.faq details:hover, .faq details[open] { border-color: var(--line-strong); }
+.faq summary { cursor: pointer; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 18px 0; font-weight: 600; font-size: 16px; list-style: none; }
+.faq summary::-webkit-details-marker { display: none; }
+.faq summary:focus-visible { outline: 2px solid var(--primary); outline-offset: 4px; border-radius: 8px; }
+.faq-chevron { flex: none; color: var(--ink-2); transition: transform 0.2s ease; }
+.faq details[open] .faq-chevron { transform: rotate(180deg); }
+.faq details[open] summary { border-bottom: 1px solid var(--line); }
+.faq details p { margin: 14px 0 18px; color: var(--ink-2); }
+@media (prefers-reduced-motion: reduce) { .faq-chevron, .faq details { transition: none; } }
+
+.public-cta { padding: 56px 0; background: var(--hero-bg); color: var(--on-forest); text-align: center; }
+.public-cta h2 { color: var(--on-forest); }
+.public-cta p { color: var(--on-forest-2); margin: 10px 0 24px; }
+.btn-outline.on-dark { border-color: var(--on-forest); color: var(--on-forest); }
+
+.public-footer { padding: 24px 0 32px; border-top: 1px solid var(--line); color: var(--ink-2); }
+.public-footer .public-wrap { flex-wrap: wrap; gap: 12px; }
+
+/* Privacy: long-form text */
+.prose h1 { font-size: clamp(30px, 6vw, 42px); }
+.prose h2 { font-size: 22px; margin-top: 32px; }
+.prose ul { padding-left: 20px; line-height: 1.6; }
+.prose li { margin: 6px 0; }
+
+/* The hero's 3D body (HeroBodyCanvas, loaded after the page is up). */
+.hero-body { display: grid; gap: 10px; padding: 12px; width: 100%; max-width: 680px; justify-self: end; margin: 0; overflow: hidden; }
+@media (max-width: 899px) { .hero-body { justify-self: center; } }
+.hero-canvas { position: relative; height: 380px; border-radius: var(--radius); background: radial-gradient(ellipse at 50% 40%, var(--surface-2), var(--surface) 70%); }
+@media (min-width: 900px) { .hero-canvas { height: clamp(500px, 36vw, 680px); } }
+/* Phones: a swipe over the body scrolls the page (tap still picks a muscle). */
+.hero-canvas canvas { touch-action: pan-y !important; }
+.hero-placeholder { position: absolute; inset: 0; display: grid; place-items: center; align-content: center; gap: 12px; opacity: 0.9; }
+.hero-placeholder svg { opacity: 0.5; }
+.hero-body .map-loading { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); padding: 4px 10px; border-radius: var(--pill); background: var(--surface); font-size: 12px; color: var(--ink-2); box-shadow: var(--shadow); }
+.hero-body .placeholder { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; color: var(--ink-2); font-size: 14px; }
+.hero-tip { position: absolute; transform: translate(12px, -110%); pointer-events: none; display: grid; gap: 2px; padding: 6px 10px; border-radius: 10px; background: var(--ink); color: var(--bg); font-size: 12px; white-space: nowrap; }
+.hero-picked { position: absolute; left: 10px; right: 10px; bottom: 10px; padding: 8px 12px; border-radius: 12px; background: var(--surface); box-shadow: var(--shadow); font-size: 13px; text-align: center; }
+.hero-body figcaption { display: grid; gap: 6px; padding: 0 4px 4px; }
+.hero-body figcaption p { margin: 0; line-height: 1.4; }
+.hero-credit { opacity: 0.8; }
+.hero-legend { display: flex; flex-wrap: wrap; gap: 12px; font-size: 12px; color: var(--ink-2); }
+.hero-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.band { display: inline-block; width: 12px; height: 12px; border-radius: 4px; }
+.band.high { background: var(--band-high); }
+.band.some { background: var(--band-some); }
+.band.none { background: var(--band-none); border: 1px solid var(--line-strong); }
+
+/* "For clients": the heading beside the example week. */
+.section-split { display: grid; grid-template-columns: minmax(0, 1fr); gap: 24px; align-items: center; margin-bottom: 24px; }
+.section-split .section-lead { margin-bottom: 0; }
+@media (min-width: 900px) { .section-split { grid-template-columns: 1.2fr 0.8fr; gap: 48px; } }
+@media (min-width: 900px) { .section-split .week-sample { justify-self: end; max-width: 480px; } }

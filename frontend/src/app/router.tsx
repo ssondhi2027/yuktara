@@ -18,6 +18,8 @@ import { ProgressPage } from '@/features/client/progress/ProgressPage'
 import { CoachDashboardPage } from '@/features/coach/dashboard/DashboardPage'
 import { CheckinsPage } from '@/features/coach/review/CheckinsPage'
 import { AuthPage } from '@/features/auth/AuthPage'
+import { LandingPage } from '@/features/public/LandingPage'
+import { PrivacyPage } from '@/features/public/PrivacyPage'
 import { RequireAuth } from './auth'
 
 // three.js is ~600 kB; only the Train tab pays for it.
@@ -25,11 +27,13 @@ const TrainPage = lazy(() => import('@/features/client/train/TrainPage'))
 const WorkoutPage = lazy(() => import('@/features/client/train/WorkoutPage'))
 
 export const router = createBrowserRouter([
-  // The app opens here when nobody is signed in.
+  // Public pages (pre-rendered at build time: scripts/prerender.mjs). The landing
+  // page is / for anyone not signed in; signed-in clients get their Home there.
   { path: '/login', element: <AuthPage /> },
+  { path: '/privacy', element: <PrivacyPage /> },
   {
     path: '/',
-    element: <RequireAuth role="client"><ClientShell /></RequireAuth>,
+    element: <RequireAuth role="client" signedOut={<LandingPage />}><ClientShell /></RequireAuth>,
     children: [
       { index: true, element: <ClientHomePage /> },
       { path: 'train', element: <Suspense fallback={<PageLoading />}><TrainPage /></Suspense> },

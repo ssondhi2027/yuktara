@@ -224,9 +224,13 @@ export interface BodyMapProps {
   zoom: boolean
   dark: boolean
   colorMode: ColorMode
+  /** turn slowly on its own (the landing page) */
+  autoRotate?: boolean
+  /** drag to turn (default on); off where a drag should scroll the page instead */
+  rotate?: boolean
 }
 
-export default function BodyMap({ sets, selected, onSelect, onHover, onReady, view, resetKey, focus, zoom, dark, colorMode }: BodyMapProps) {
+export default function BodyMap({ sets, selected, onSelect, onHover, onReady, view, resetKey, focus, zoom, dark, colorMode, autoRotate = false, rotate = true }: BodyMapProps) {
   const controls = useRef<OrbitControlsImpl | null>(null)
   return (
     <ModelErrorBoundary>
@@ -239,7 +243,8 @@ export default function BodyMap({ sets, selected, onSelect, onHover, onReady, vi
         <Suspense fallback={<Loader />}>
           <Anatomy sets={sets} selected={selected} colorMode={colorMode} dark={dark} onSelect={onSelect} onHover={onHover} onReady={onReady} />
         </Suspense>
-        <OrbitControls ref={controls} target={[0, CENTER_Y, 0]} enablePan={false} enableZoom={zoom} minDistance={0.8} maxDistance={4.5}
+        <OrbitControls ref={controls} target={[0, CENTER_Y, 0]} enablePan={false} enableZoom={zoom} enableRotate={rotate}
+          autoRotate={autoRotate} autoRotateSpeed={1.2} minDistance={0.8} maxDistance={4.5}
           minPolarAngle={Math.PI / 2 - 0.6} maxPolarAngle={Math.PI / 2 + 0.4} rotateSpeed={0.8} />
         <CameraRig view={view} focus={focus} resetKey={resetKey} controls={controls} />
       </Canvas>

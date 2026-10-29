@@ -5,6 +5,21 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#123A2B" />
     <title>Yuktara</title>
+    <meta name="description" content="Online coaching for training and nutrition: programs, workout logging, meal plans, habits and weekly check-ins." />
+    <!-- Public pages are saved as finished HTML at build time (scripts/prerender.mjs). Someone already signed in (or in
+         guest mode) shouldn't see that page flash before their app loads: the same test as hasStoredSession() in src/app/auth.tsx. -->
+    <style>.has-session [data-prerendered] { display: none; }</style>
+    <script>
+      try {
+        for (var i = 0; i < localStorage.length; i++) {
+          var k = localStorage.key(i) || ''
+          if (/^sb-.+-auth-token$/.test(k) || (k === 'yuktara.guest.session' && localStorage.getItem(k) === '1')) {
+            document.documentElement.classList.add('has-session')
+            break
+          }
+        }
+      } catch (e) {}
+    </script>
     <link rel="icon" type="image/svg+xml" href="/icons/icon.svg" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
