@@ -631,7 +631,7 @@ function aishaProgressRaw(): ProgressRaw {
       for (const x of sessions.get(id)?.sets ?? []) if (x.weight_kg != null && !x.is_warmup && x.drop_of == null) logged.set(x.exercise_id, Math.min(logged.get(x.exercise_id) ?? Infinity, x.weight_kg))
     }
     for (let d = PROGRAM_START; d <= TODAY; d = plusDays(d, 1)) {
-      const week = Math.floor((new Date(`${d}T00:00:00`).getTime() - new Date(`${PROGRAM_START}T00:00:00`).getTime()) / (7 * 86_400_000))
+      const week = Math.floor(Math.round((new Date(`${d}T00:00:00`).getTime() - new Date(`${PROGRAM_START}T00:00:00`).getTime()) / 86_400_000) / 7)
       const dow = new Date(`${d}T00:00:00`).getDay()
       const weighIn = dow !== 3 && dow !== 6 // about five weigh-ins a week
       days.push({
