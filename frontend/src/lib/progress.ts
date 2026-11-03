@@ -119,7 +119,9 @@ export interface LiftHistory {
 const DAY = 86_400_000
 const toDate = (iso: string) => new Date(`${iso}T00:00:00`)
 const iso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-export const plusDays = (d: string, n: number) => iso(new Date(toDate(d).getTime() + n * DAY))
+// Calendar days, not 24-hour steps: across a clock change (a 23- or 25-hour day)
+// adding 24 hours repeats or skips a date, and day-by-day loops never end.
+export const plusDays = (d: string, n: number) => { const t = toDate(d); t.setDate(t.getDate() + n); return iso(t) }
 export const mondayOf = (d: string) => plusDays(d, -((toDate(d).getDay() + 6) % 7))
 
 /** Mondays of the period's weeks (oldest first), and of the same number of weeks before them. */

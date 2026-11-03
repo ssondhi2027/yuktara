@@ -138,7 +138,8 @@ const r1 = (x: number) => Math.round(x * 10) / 10
 const DAY = 86_400_000
 const d0 = (iso: string) => new Date(`${iso}T00:00:00`)
 const isoOf = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-const addDays = (iso: string, n: number) => isoOf(new Date(d0(iso).getTime() + Math.round(n) * DAY))
+// Calendar days, not 24-hour steps, so a clock change (a 23- or 25-hour day) can't repeat or skip a date.
+const addDays = (iso: string, n: number) => { const d = d0(iso); d.setDate(d.getDate() + Math.round(n)); return isoOf(d) }
 const daysBetween = (a: string, b: string) => Math.round((d0(b).getTime() - d0(a).getTime()) / DAY)
 const mondayOf = (iso: string) => addDays(iso, -((d0(iso).getDay() + 6) % 7))
 

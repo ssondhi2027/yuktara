@@ -13,8 +13,11 @@ export function toISODate(d: Date): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
 }
 
+/** Calendar days, not 24-hour steps: a day with a clock change (23 or 25 hours) still counts as one. */
 export function addDays(iso: string, days: number): string {
-  return toISODate(new Date(parseDate(iso).getTime() + days * DAY))
+  const d = parseDate(iso)
+  d.setDate(d.getDate() + days)
+  return toISODate(d)
 }
 
 /** Monday of the week containing `iso` (check_ins.week_start is always a Monday). */
@@ -26,7 +29,8 @@ export function weekStart(iso: string): string {
 
 /** 1-based program week for a date, given the program start date. */
 export function programWeek(startIso: string, iso: string): number {
-  return Math.floor((parseDate(iso).getTime() - parseDate(startIso).getTime()) / (7 * DAY)) + 1
+  // Whole days first (rounded, so a clock change's lost or extra hour doesn't count), then weeks.
+  return Math.floor(Math.round((parseDate(iso).getTime() - parseDate(startIso).getTime()) / DAY) / 7) + 1
 }
 
 const fmt = (opts: Intl.DateTimeFormatOptions) => new Intl.DateTimeFormat('en-US', opts)
